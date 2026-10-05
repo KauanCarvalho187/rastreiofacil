@@ -271,26 +271,12 @@ async function load(){
   render();
   } finally { _carregando = false; if(_pendente){ _pendente = false; load(); } }
 }
-/* ===== melhoria v22: atrasados (+7d), filtro reutilizável e destaque dos cards ===== */
-function tsEnvio(e){
-  let s = String((e && e.criado_em) || '').trim();
-  if(!s) return NaN;
-  s = s.replace(' ', 'T');
-  /* 'YYYY-MM-DDTHH:MM:SS' sem timezone = UTC (SQLite datetime('now') / Postgres) */
-  if(/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}(:\d{2})?$/.test(s)) s += 'Z';
-  return Date.parse(s);
-}
-function ehAtrasado(e){
-  if(uiStatus(e) !== 'pendente') return false;
-  const t = tsEnvio(e);
-  if(isNaN(t)) return false;
-  return (Date.now() - t) > 7 * 24 * 3600 * 1000; /* pendente há mais de 7 dias */
-}
+/* ===== melhoria v22: filtro reutilizável e destaque dos cards ===== */
 function filtrados(){
   const q = ($('f-busca').value || '').toLowerCase();
   const f = $('f-filtro').value;
   return state.envios.filter(e => {
-    const okF = f === 'todos' ? true : (f === 'atrasados' ? ehAtrasado(e) : uiStatus(e) === f);
+    const okF = f === 'todos' ? true : uiStatus(e) === f;
     const okQ = !q || (e.destinatario + ' ' + e.codigo + ' ' + (e.descricao || '')).toLowerCase().includes(q);
     return okF && okQ;
   });
@@ -301,9 +287,6 @@ function render(){
   $('st-pend').textContent = state.envios.filter(e=>uiStatus(e)==='pendente').length;
   $('st-cam').textContent = state.envios.filter(e=>uiStatus(e)==='a_caminho').length;
   $('st-ent').textContent = state.envios.filter(e=>uiStatus(e)==='entregue').length;
-  const nAtr = state.envios.filter(ehAtrasado).length;
-  $('st-atr').textContent = nAtr;
-  $('card-atr').classList.toggle('alerta-on', nAtr > 0);
   document.querySelectorAll('.stat[data-filtro]').forEach(c=>c.classList.toggle('ativo', c.dataset.filtro === $('f-filtro').value));
   $('list-count').textContent = list.length;
   $('empty').style.display = list.length ? 'none' : 'block';

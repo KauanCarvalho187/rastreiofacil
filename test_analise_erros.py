@@ -117,11 +117,7 @@ check("v22: rota /api/backup existe e exige admin",
       '@app.get("/api/backup")' in main and 'if not usuario.get("admin")' in main)
 check("v22: /auth/estado informa se o token e de admin",
       '"admin": admin' in main and "authorization: str = Header(None)" in main)
-check("v22: HTML tem card de atrasados com data-filtro",
-      'data-filtro="atrasados"' in html and 'id="st-atr"' in html)
-check("v22: select tem opcao atrasados (+7 dias)", 'value="atrasados"' in html)
 check("v22: botao backup no HTML (hidden por padrao)", 'id="btn-backup"' in html and 'btn-backup" hidden' in html)
-check("v22: logica de atraso (+7 dias) no JS", "function ehAtrasado" in js and "7 * 24 * 3600 * 1000" in js)
 check("v22: cards de stats filtram a lista (clique)",
       ".stat[data-filtro]" in js and "c.dataset.filtro" in js)
 check("v22: export CSV/XLSX usa o recorte filtrado", js.count("const lista = filtrados();") >= 2)

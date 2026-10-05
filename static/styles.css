@@ -166,12 +166,6 @@ body {
   border-color: #58a6ff;
   background: rgba(88, 166, 255, .08);
 }
-.stat-alerta.alerta-on {
-  border-color: #ff6b6b;
-}
-.stat-alerta.alerta-on b {
-  color: #ff6b6b;
-}
 .stat-ico {
   flex-shrink: 0;
   background: var(--card2);
