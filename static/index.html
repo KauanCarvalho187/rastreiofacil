@@ -1,0 +1,116 @@
+<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Rastreio Facil</title>
+<link rel="stylesheet" href="/static/styles.css">
+<link rel="icon" href="data:image/svg+xml,<svg xmlns=%22http://www.w3.org/2000/svg%22 viewBox=%220 0 100 100%22><text y=%22.9em%22 font-size=%2290%22>📦</text></svg>">
+</head>
+<body>
+<header class="top">
+  <div class="brand">
+    <div class="logo">📦</div>
+    <div><h1>Rastreio Fácil</h1><p>Cadastre envios e notifique seus clientes em segundos</p></div>
+  </div>
+  <div class="top-actions">
+    <span class="pill" id="db-pill" title="Status do banco">⏳ banco…</span>
+    <button class="icon-btn" id="btn-notifica-massa" title="Notificar todos pendentes por e-mail">📣</button>
+    <button class="icon-btn" id="btn-logout" title="Sair">⏻</button>
+    <button class="icon-btn" id="btn-login" title="Login / admin">👤</button>
+  </div>
+</header>
+<main class="wrap">
+  <section class="stats">
+    <div class="stat"><span class="stat-ico">📦</span><div><b id="st-total">0</b><small>Total</small></div></div>
+    <div class="stat"><span class="stat-ico">🕐</span><div><b id="st-pend">0</b><small>Pendentes</small></div></div>
+    <div class="stat"><span class="stat-ico">🚚</span><div><b id="st-cam">0</b><small>A caminho</small></div></div>
+    <div class="stat"><span class="stat-ico">📬</span><div><b id="st-ent">0</b><small>Entregues</small></div></div>
+  </section>
+  <section class="grid">
+    <div class="card form-card">
+      <h2>📦 Novo envio</h2>
+      <label>Destinatário<input id="f-nome" placeholder="Ex.: Maria Silva" autocomplete="off" maxlength="80"></label>
+      <label>Código de rastreio<input id="f-codigo" placeholder="AA123456789BR" maxlength="13" style="text-transform:uppercase" autocomplete="off" spellcheck="false"><small class="field-msg" id="f-codigo-msg">Formato: 2 letras + 9 números + BR</small></label>
+      <div class="row2">
+        <label>E-mail<input id="f-email" type="email" placeholder="cliente@email.com" autocomplete="off" maxlength="120"><small class="field-msg" id="f-email-msg">Para enviar notificação por e-mail</small></label>
+        <label>WhatsApp<input id="f-fone" placeholder="(11) 91234-5678" autocomplete="off" inputmode="numeric" maxlength="16"></label>
+      </div>
+      <label>Observações <span class="opt">(opcional)</span><textarea id="f-desc" rows="3" placeholder="Ex.: Pedido #1024 — 2 itens"></textarea></label>
+      <p class="hint">Informe ao menos um contato (e-mail ou WhatsApp) para gerar a notificação.</p>
+      <div class="row2b">
+        <select id="f-status" title="Status inicial">
+          <option value="a_caminho">A caminho</option>
+          <option value="pendente">Pendente</option>
+          <option value="entregue">Entregue</option>
+        </select>
+        <button class="btn-light" id="btn-add">＋ Cadastrar envio</button>
+      </div>
+      <div class="mini-row">
+        <input id="f-busca" placeholder="🔍 Buscar…">
+        <select id="f-filtro"><option value="todos">Todos</option><option value="a_caminho">A caminho</option><option value="pendente">Pendentes</option><option value="entregue">Entregues</option></select>
+      </div>
+      <div class="import-box">
+        <h3>📥 Importar planilha (Excel / CSV)</h3>
+        <p class="hint">Arraste um <b>.xlsx</b> / <b>.csv</b> ou clique para selecionar. Colunas: Nome | Código (AA123456789BR) | Celular | E-mail | Descrição (cabeçalho opcional).</p>
+        <div class="drop" id="drop">📁 Arraste o arquivo aqui ou clique para selecionar<input type="file" id="f-file" accept=".csv,.xlsx,.xls" hidden></div>
+        <textarea id="f-csv" rows="3" placeholder="Maria Silva,AA123456789BR,(11) 91234-5678,maria@email.com,Pedido #1024"></textarea>
+        <div class="import-actions"><button class="chip" id="btn-import-txt">Importar texto</button><button class="chip" id="btn-force-local">💾 Forçar salvamento local</button><button class="chip" id="btn-modelo">Baixar modelo CSV</button><button class="chip" id="btn-exp-csv">Exportar CSV</button><button class="chip" id="btn-exp-xlsx">Exportar Excel</button></div>
+        <p class="hint" id="import-msg"></p>
+        <p class="hint">Não funcionou? <a href="/static/resgate.html" target="_blank" style="color:#58a6ff">🛟 Abrir a página de resgate</a> — importa o CSV e grava direto no navegador, sem depender do sistema. Em caso de erro, aparece uma barra vermelha no rodapé desta tela.</p>
+      </div>
+    </div>
+    <div class="list-col">
+      <h2>Envios (<span id="list-count">0</span>)</h2>
+      <div class="empty" id="empty">
+        <div class="empty-ico">📦</div>
+        <b>Nenhum envio cadastrado ainda</b>
+        <p>Use o formulário ao lado para cadastrar o primeiro<br>envio e gerar a notificação do cliente.</p>
+      </div>
+      <div class="lista-scroll" id="lista-scroll"><div id="lista"></div></div>
+    </div>
+  </section>
+</main>
+<div class="toast" id="toast"><span id="toast-msg"></span></div>
+<div class="modal-ov" id="modal-wa" hidden>
+  <div class="modal">
+    <div class="modal-h"><h3>💬 Mensagem do WhatsApp</h3><button class="x" data-close>✕</button></div>
+    <div class="modal-b">
+      <p class="hint">Confira a mensagem abaixo. Ao clicar no botão ela é <b>copiada</b> e o chat abre — cole com <b>Ctrl+V</b> no WhatsApp.</p>
+      <textarea id="wa-msg" rows="16" readonly style="width:100%;resize:vertical"></textarea>
+    </div>
+    <div class="modal-f"><button class="btn-ghost" data-close>Fechar</button><button class="btn-light" id="btn-wa-enviar">📋 Copiar e abrir WhatsApp</button></div>
+  </div>
+</div>
+<div class="modal-ov" id="modal-edit" hidden>
+  <div class="modal">
+    <div class="modal-h"><h3>✏️ Editar envio</h3><button class="x" data-close>✕</button></div>
+    <div class="modal-b">
+      <p class="hint">Corrija qualquer campo e clique em <b>Salvar</b>. Vale para nome, código de rastreio, WhatsApp, e-mail e observações.</p>
+      <label>Destinatário<input id="ed-nome" placeholder="Ex.: Maria Silva" autocomplete="off" maxlength="80"></label>
+      <label>Código de rastreio<input id="ed-codigo" placeholder="AA123456789BR" maxlength="13" style="text-transform:uppercase" autocomplete="off" spellcheck="false"><small class="field-msg" id="ed-codigo-msg">Formato: 2 letras + 9 números + BR</small></label>
+      <label>WhatsApp<input id="ed-fone" placeholder="(11) 91234-5678" autocomplete="off" inputmode="numeric" maxlength="16"></label>
+      <label>E-mail<input id="ed-email" type="email" placeholder="cliente@email.com" autocomplete="off" maxlength="120"><small class="field-msg" id="ed-email-msg">Para enviar notificação por e-mail</small></label>
+      <label>Observações<textarea id="ed-desc" rows="3" placeholder="Ex.: Pedido #1024 — 2 itens"></textarea></label>
+      <p class="err" id="ed-err" hidden></p>
+    </div>
+    <div class="modal-f"><button class="btn-ghost" data-close>Cancelar</button><button class="btn-light" id="btn-ed-salvar">💾 Salvar</button></div>
+  </div>
+</div>
+<div class="modal-ov" id="modal-login" hidden>
+  <div class="modal">
+    <div class="modal-h"><h3>👤 Acesso administrativo</h3><button class="x" data-close>✕</button></div>
+    <div class="modal-b">
+      <p class="hint">Com login, os envios ficam no banco de dados (compartilhados). Sem login, o sistema funciona só em modo local (dados salvos neste navegador).</p>
+      <label>E-mail<input id="l-email" type="email" placeholder="voce@empresa.com"></label>
+      <label>Senha<input id="l-senha" type="password" placeholder="••••••••"></label>
+      <label id="l-nome-w" hidden>Nome<input id="l-nome" placeholder="Seu nome"></label>
+      <p class="err" id="l-err" hidden></p>
+    </div>
+    <div class="modal-f"><button class="btn-ghost" data-close>Fechar</button><button class="btn-light" id="btn-do-login">Entrar</button><button class="btn-ghost" id="btn-do-reg">Criar admin (1º uso)</button></div>
+  </div>
+</div>
+<script src="/static/libs/xlsx.full.min.js"></script>
+<script src="/static/app.js?v=21"></script>
+</body>
+</html>

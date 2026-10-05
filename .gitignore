@@ -1,0 +1,10 @@
+database.db
+.env
+__pycache__/
+*.pyc
+*.log
+.venv/
+node_modules/
+package-lock.json
+envios-backup.json
+*.zip

@@ -1,0 +1,689 @@
+# -*- coding: utf-8 -*-
+"""
+Rastreio Facil — Backend FastAPI modernizado (dark UI + Postgres/SQLite) v20.
+Melhorias v20:
+- seguranca: logout, senha min 8, rate-limit login, CORS por env, limpeza sessoes
+- performance: paginacao/busca server-side, estatisticas reais
+- gestao: usuarios CRUD, troca senha, eventos/historico, notificacao em massa
+"""
+from contextlib import asynccontextmanager
+from fastapi import FastAPI, HTTPException, Request, Body, Header, Depends, Query
+from fastapi.staticfiles import StaticFiles
+from fastapi.responses import FileResponse
+from fastapi.middleware.cors import CORSMiddleware
+from pydantic import BaseModel
+from typing import Optional
+from dotenv import load_dotenv
+import os, re, hashlib, secrets, time
+from datetime import datetime, timedelta, timezone
+from html import escape as _html_escape
+import aiosmtplib
+from email.mime.text import MIMEText
+from email.mime.multipart import MIMEMultipart
+
+load_dotenv()
+
+from db import (
+    USE_POSTGRES,
+    fetch_all, fetch_one, execute, init_db, db_status_info,
+)
+
+SMTP_HOST = os.getenv("SMTP_HOST", "smtp.gmail.com")
+SMTP_PORT = int(os.getenv("SMTP_PORT", "587"))
+SMTP_USER = os.getenv("SMTP_USER", "")
+SMTP_PASS = os.getenv("SMTP_PASS", "")
+SENDER_NAME = os.getenv("SENDER_NAME", "Rastreio Facil")
+PORT = int(os.getenv("PORT", "3000"))
+SESSAO_DIAS = int(os.getenv("SESSAO_DIAS", "7"))
+# CORS restrito por env (melhoria): padrao "*" para nao quebrar Live Server/file://,
+# mas em producao defina CORS_ORIGINS=https://seu-dominio.com,https://app...
+CORS_ORIGINS = [o.strip() for o in os.getenv("CORS_ORIGINS", "*").split(",") if o.strip()]
+# Rate-limit simples em memoria para login (melhoria anti brute-force)
+_LOGIN_TENTATIVAS: dict = {}
+LOGIN_MAX_TENT = int(os.getenv("LOGIN_MAX_TENT", "10"))
+LOGIN_JANELA_SEG = int(os.getenv("LOGIN_JANELA_SEG", "300"))
+
+def _login_bloqueado(ip: str) -> bool:
+    agora = time.time()
+    lst = [t for t in _LOGIN_TENTATIVAS.get(ip, []) if agora - t < LOGIN_JANELA_SEG]
+    _LOGIN_TENTATIVAS[ip] = lst
+    return len(lst) >= LOGIN_MAX_TENT
+
+def _login_registrar_falha(ip: str):
+    _LOGIN_TENTATIVAS.setdefault(ip, []).append(time.time())
+
+def _login_limpar(ip: str):
+    _LOGIN_TENTATIVAS.pop(ip, None)
+
+from validacao import (
+    REGEX_CODIGO as _REGEX_CODIGO, REGEX_EMAIL as _REGEX_EMAIL,
+    limpar_codigo as _limpar_codigo, validar_codigo as _validar_codigo_raw,
+    validar_email as _validar_email_raw, normalizar_celular as _normalizar_celular_raw,
+    normalizar_status as _normalizar_status,
+)
+REGEX_CODIGO = _REGEX_CODIGO
+REGEX_EMAIL = _REGEX_EMAIL
+
+def smtp_configurado() -> bool:
+    return bool(SMTP_USER and SMTP_PASS)
+
+def validar_codigo(codigo: str) -> str:
+    try:
+        return _validar_codigo_raw(codigo)
+    except ValueError as e:
+        raise HTTPException(422, str(e))
+
+def validar_email(email: str) -> str:
+    email = (email or "").strip()
+    if not email:
+        return email
+    if " " in email:
+        raise HTTPException(422, f"E-mail invalido: {email} — nao pode ter espacos")
+    if "@" not in email:
+        raise HTTPException(422, f"E-mail invalido: {email} — falta o @ (ex: nome@dominio.com)")
+    local, _, dom = email.partition("@")
+    if not local:
+        raise HTTPException(422, f"E-mail invalido: {email} — falta o nome antes do @ (ex: nome@dominio.com)")
+    if not dom:
+        raise HTTPException(422, f"E-mail invalido: {email} — falta o dominio depois do @ (ex: nome@dominio.com)")
+    if "." not in dom:
+        raise HTTPException(422, f"E-mail invalido: {email} — falta o ponto no dominio (ex: dominio.com)")
+    if not REGEX_EMAIL.match(email):
+        raise HTTPException(422, f"E-mail invalido: {email} — formato esperado: nome@dominio.com")
+    return email
+
+def normalizar_celular(valor: str) -> str:
+    d = re.sub(r"\D", "", str(valor or ""))
+    if d.startswith("0055"):
+        d = "55" + d[4:]
+    if d.startswith("0") and len(d) > 1:
+        d = d[1:]
+    if d.startswith("55") and len(d) in (12, 13):
+        d = d[2:]
+    if d and len(d) not in (10, 11):
+        raise HTTPException(422, "Celular invalido — use DDD + 8/9 digitos, ex: (11) 98765-4321")
+    return d
+
+def gerar_link_rastreio(codigo: str) -> str:
+    return f"https://rastreamento.correios.com.br/app/index.php?objeto={codigo}"
+
+def _agora_iso() -> str:
+    return datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M:%S")
+
+def _expira_iso(dias: int = SESSAO_DIAS) -> str:
+    return (datetime.now(timezone.utc) + timedelta(days=dias)).strftime("%Y-%m-%d %H:%M:%S")
+
+def hash_senha(senha: str) -> str:
+    sal = secrets.token_hex(16)
+    h = hashlib.pbkdf2_hmac("sha256", senha.encode("utf-8"), bytes.fromhex(sal), 100_000).hex()
+    return f"{sal}${h}"
+
+def verificar_senha(senha: str, armazenada: str) -> bool:
+    try:
+        sal, h = armazenada.split("$", 1)
+        calc = hashlib.pbkdf2_hmac("sha256", senha.encode("utf-8"), bytes.fromhex(sal), 100_000).hex()
+        return secrets.compare_digest(calc, h)
+    except (ValueError, TypeError, AttributeError):
+        return False
+
+async def contar_usuarios() -> int:
+    row = await fetch_one("SELECT COUNT(*) AS n FROM usuarios")
+    return int(row["n"]) if row else 0
+
+
+
+async def auth_usuario(authorization: str = Header(None)):
+    if not authorization or not authorization.startswith("Bearer "):
+        raise HTTPException(401, "Nao autenticado")
+    token = authorization[7:].strip()
+    if USE_POSTGRES:
+        row = await fetch_one(
+            "SELECT u.id, u.nome, u.email, u.admin FROM sessoes s "
+            "JOIN usuarios u ON u.id = s.usuario_id "
+            "WHERE s.token = ? AND s.expira_em > NOW() AND u.ativo = 1", (token,))
+    else:
+        row = await fetch_one(
+            "SELECT u.id, u.nome, u.email, u.admin FROM sessoes s "
+            "JOIN usuarios u ON u.id = s.usuario_id "
+            "WHERE s.token = ? AND s.expira_em > ? AND u.ativo = 1", (token, _agora_iso()))
+    if not row:
+        raise HTTPException(401, "Sessao invalida ou expirada")
+    return dict(row)
+
+async def auth_opcional(authorization: str = Header(None)):
+    if await contar_usuarios() == 0:
+        return {"id": 0, "nome": "setup", "email": "", "admin": True, "bootstrap": True}
+    if not authorization or not authorization.startswith("Bearer "):
+        raise HTTPException(401, "Nao autenticado")
+    return await auth_usuario(authorization)
+
+def _row_to_envio(row: dict) -> dict:
+    status = (row.get("status") or "pendente")
+    notificado = bool(row.get("notificado"))
+    criado = row.get("criado_em")
+    criado_s = str(criado) if criado is not None else ""
+    return {
+        "_id": row.get("id"),
+        "destinatario": row.get("destinatario") or "",
+        "codigo": row.get("codigo"),
+        "celular": row.get("celular") or "",
+        "email": row.get("email") or "",
+        "descricao": row.get("descricao") or "",
+        "status": status,
+        "notificado": notificado,
+        "criado_em": criado_s,
+        "link": gerar_link_rastreio(row.get("codigo") or ""),
+    }
+
+class EnvioUpdate(BaseModel):
+    destinatario: Optional[str] = None
+    codigo: Optional[str] = None
+    celular: Optional[str] = None
+    email: Optional[str] = None
+    descricao: Optional[str] = None
+    status: Optional[str] = None
+
+class NotificacaoItem(BaseModel):
+    codigo: str
+    canal: str = "email"
+    mensagem: str = ""
+    assunto: Optional[str] = None
+
+class LoginItem(BaseModel):
+    email: str
+    senha: str
+
+class UsuarioCreate(BaseModel):
+    nome: str
+    email: str
+    senha: str
+    admin: bool = False
+
+@asynccontextmanager
+async def lifespan(app: FastAPI):
+    try:
+        await init_db()
+        # melhoria: limpa sessoes expiradas no boot (evita tabela crescendo p/ sempre)
+        try:
+            if USE_POSTGRES:
+                await execute("DELETE FROM sessoes WHERE expira_em <= NOW()")
+            else:
+                await execute("DELETE FROM sessoes WHERE expira_em <= ?", (_agora_iso(),))
+        except Exception:
+            pass
+    except Exception as e:
+        print(f"[DB] init falhou: {e}")
+    yield
+
+app = FastAPI(title="Rastreio Facil", lifespan=lifespan)
+# CORS: por env (melhoria). Padrao "*" mantem compat. com Live Server :5501 / file://.
+# Em producao defina CORS_ORIGINS com seus dominios.
+# NÃO remover o CORSMiddleware: sem isso o navegador bloqueia as chamadas cross-origin para a API.
+app.add_middleware(CORSMiddleware, allow_origins=CORS_ORIGINS,
+    allow_credentials=False,
+    allow_methods=["GET","POST","PUT","PATCH","DELETE","OPTIONS"],
+    allow_headers=["Content-Type","Authorization"])
+
+@app.middleware("http")
+async def _cache(request: Request, call_next):
+    resp = await call_next(request)
+    p = request.url.path
+    if p.startswith(("/static/libs/","/static/img/")):
+        resp.headers["Cache-Control"] = "public, max-age=31536000, immutable"
+    elif p.endswith((".js",".css",".html",".json")):
+        resp.headers["Cache-Control"] = "no-cache, must-revalidate"
+    return resp
+
+@app.get("/api/health")
+async def health():
+    st = db_status_info()
+    ok = True
+    err = None
+    try:
+        await fetch_one("SELECT 1 AS ok")
+    except Exception as e:
+        ok = False
+        err = str(e)[:300]
+    st["connected"] = ok
+    if err:
+        st["error"] = err
+    return {"ok": ok, "db": st, "smtp": smtp_configurado()}
+
+@app.get("/api/db-status")
+async def db_status():
+    st = db_status_info()
+    try:
+        await fetch_one("SELECT 1 AS ok")
+        st["connected"] = True
+    except Exception as e:
+        st["connected"] = False
+        st["error"] = str(e)[:300]
+    return st
+
+@app.get("/api/auth/estado")
+async def estado_auth():
+    return {"temUsuarios": await contar_usuarios() > 0}
+
+
+@app.post("/api/envios")
+async def criar_envios(payload: dict = Body(...), usuario: dict = Depends(auth_opcional)):
+    if not isinstance(payload, dict):
+        raise HTTPException(422, "Corpo invalido")
+    m = payload.get("envios") if "envios" in payload else None
+    if m is None:
+        itens = [payload]
+    elif isinstance(m, list):
+        itens = m
+    else:
+        itens = [m]
+    if not isinstance(itens, list) or not itens:
+        raise HTTPException(422, "Corpo vazio ou invalido")
+    if len(itens) > 500:
+        raise HTTPException(422, "Lote muito grande (máximo 500 por vez)")
+    # valida TUDO antes de inserir (lote atômico: ou entra tudo ou erro detalhado)
+    norm = []
+    erros = []
+    vistos = set()
+    for idx, it in enumerate(itens):
+        lin = idx + 1
+        if not isinstance(it, dict):
+            erros.append(f"linha {lin}: item inválido"); continue
+        nome = str(it.get("destinatario","") or it.get("nome","")).strip()
+        cod_raw = str(it.get("codigo",""))
+        mail_raw = str(it.get("email",""))
+        cel_raw = str(it.get("celular",""))
+        desc = str(it.get("descricao","") or it.get("observacoes","")).strip()
+        status = str(it.get("status","pendente") or "pendente").strip().lower()
+        if status not in ("pendente","a_caminho","entregue"): status = "pendente"
+        if not nome:
+            erros.append(f"linha {lin}: destinatário vazio"); continue
+        try:
+            codigo = validar_codigo(cod_raw)
+        except HTTPException:
+            erros.append(f"linha {lin} ({cod_raw.strip() or 'vazio'}): código inválido — use 2 letras + 9 números + BR"); continue
+        try:
+            email = validar_email(mail_raw)
+        except HTTPException:
+            erros.append(f"linha {lin}: e-mail inválido ({mail_raw.strip()})"); continue
+        try:
+            celular = normalizar_celular(cel_raw)
+        except HTTPException:
+            erros.append(f"linha {lin}: celular inválido ({cel_raw.strip()}) — use DDD + 8/9 dígitos"); continue
+        if not email and not celular:
+            erros.append(f"linha {lin}: Informe ao menos e-mail ou WhatsApp"); continue
+        if codigo in vistos:
+            erros.append(f"linha {lin}: código duplicado na planilha ({codigo})"); continue
+        vistos.add(codigo)
+        norm.append((nome, codigo, celular, email, desc, status))
+    if erros and not norm:
+        raise HTTPException(422, "Nenhuma linha válida. " + "; ".join(erros[:8]))
+    criados = []
+    uid = usuario.get("id") if usuario.get("id") else None
+    for (nome, codigo, celular, email, desc, status) in norm:
+        if await fetch_one("SELECT id FROM envios WHERE codigo = ?", (codigo,)):
+            erros.append(f"{codigo}: já cadastrado (ignorado)"); continue
+        _, last = await execute(
+            "INSERT INTO envios (destinatario,codigo,celular,email,descricao,status,criado_por) VALUES (?,?,?,?,?,?,?)",
+            (nome, codigo, celular, email, desc, status, uid))
+        row = await fetch_one("SELECT * FROM envios WHERE id = ?", (last,))
+        criados.append(_row_to_envio(row))
+    msg = f"{len(criados)} envio(s) criado(s)"
+    if erros: msg += f" — {len(erros)} ignorado(s): " + "; ".join(erros[:8])
+    return {"message": msg, "envios": criados, "erros": erros}
+
+async def registrar_evento(envio_id: int, de_status: str, para_status: str, por_usuario, detalhe: str = ""):
+    """Melhoria: historico/auditoria — quem mudou o status e quando."""
+    try:
+        await execute(
+            "INSERT INTO eventos (envio_id,de_status,para_status,por_usuario,detalhe) VALUES (?,?,?,?,?)",
+            (envio_id, de_status or "", para_status or "", por_usuario, detalhe or ""))
+    except Exception:
+        pass
+
+@app.put("/api/envios/{envio_id}")
+async def atualizar_envio(envio_id: int, upd: EnvioUpdate, usuario: dict = Depends(auth_opcional)):
+    row = await fetch_one("SELECT * FROM envios WHERE id = ?", (envio_id,))
+    if not row:
+        raise HTTPException(404, "Envio nao encontrado")
+    novos = (
+        str(upd.destinatario).strip() if upd.destinatario is not None else row["destinatario"],
+        validar_codigo(upd.codigo) if upd.codigo else row["codigo"],
+        normalizar_celular(upd.celular) if upd.celular is not None else row["celular"],
+        validar_email(upd.email) if upd.email is not None else row["email"],
+        str(upd.descricao).strip() if upd.descricao is not None else row["descricao"],
+    )
+    if not str(novos[0] or "").strip():
+        raise HTTPException(422, "Destinatario vazio")
+    if not novos[3] and not novos[2]:
+        raise HTTPException(422, "Informe ao menos e-mail ou WhatsApp")
+    outro = await fetch_one("SELECT id FROM envios WHERE codigo = ? AND id <> ?", (novos[1], envio_id))
+    if outro:
+        raise HTTPException(409, f"Codigo {novos[1]} ja usado em outro envio")
+    await execute("UPDATE envios SET destinatario=?, codigo=?, celular=?, email=?, descricao=?, atualizado_em=? WHERE id=?", (*novos, _agora_iso(), envio_id))
+    if upd.status:
+        s = upd.status.lower()
+        if s in ("pendente","a_caminho","entregue"):
+            await execute("UPDATE envios SET status=?, notificado=?, atualizado_em=? WHERE id=?", (s, 1 if s!="pendente" else 0, _agora_iso(), envio_id))
+            try:
+                await registrar_evento(envio_id, row["status"], s, usuario.get("id"), "edicao")
+            except Exception:
+                pass
+    row2 = await fetch_one("SELECT * FROM envios WHERE id = ?", (envio_id,))
+    return _row_to_envio(row2)
+
+@app.patch("/api/envios/{envio_id}/status")
+async def atualizar_status(envio_id: int, payload: dict = Body(...), usuario: dict = Depends(auth_opcional)):
+    s = str(payload.get("status","")).lower()
+    if s not in ("pendente","a_caminho","entregue"):
+        raise HTTPException(422, "status deve ser pendente, a_caminho ou entregue")
+    anterior = await fetch_one("SELECT status FROM envios WHERE id = ?", (envio_id,))
+    n, _ = await execute("UPDATE envios SET status=?, notificado=?, atualizado_em=? WHERE id=?", (s, 1 if s!="pendente" else 0, _agora_iso(), envio_id))
+    if n == 0:
+        raise HTTPException(404, "Envio nao encontrado")
+    try:
+        await registrar_evento(envio_id, (anterior or {}).get("status", ""), s, usuario.get("id"), "status")
+    except Exception:
+        pass
+    row = await fetch_one("SELECT * FROM envios WHERE id = ?", (envio_id,))
+    return _row_to_envio(row)
+
+@app.patch("/api/envios/{envio_id}/notificado")
+async def marcar_notificado(envio_id: int, payload: dict = Body({}), usuario: dict = Depends(auth_opcional)):
+    anterior = await fetch_one("SELECT status FROM envios WHERE id = ?", (envio_id,))
+    if not anterior:
+        raise HTTPException(404, "Envio nao encontrado")
+    # correcao v21: nao regride status — "entregue" permanece entregue;
+    # somente "pendente" avanca para "a_caminho" ao enviar a notificacao.
+    s = "a_caminho" if (anterior.get("status") or "pendente") == "pendente" else anterior.get("status")
+    n,_ = await execute("UPDATE envios SET status=?, notificado=1, atualizado_em=? WHERE id=?", (s, _agora_iso(), envio_id))
+    if n == 0:
+        raise HTTPException(404, "Envio nao encontrado")
+    try:
+        await registrar_evento(envio_id, anterior.get("status", "") or "", s, usuario.get("id"), "notificado")
+    except Exception:
+        pass
+    return {"message": "Marcado como notificado"}
+
+@app.delete("/api/envios/{envio_id}")
+async def deletar_envio(envio_id: int, usuario: dict = Depends(auth_opcional)):
+    n,_ = await execute("DELETE FROM envios WHERE id=?", (envio_id,))
+    if n == 0:
+        raise HTTPException(404, "Envio nao encontrado")
+    return {"message": "Envio removido"}
+
+def _montar_email(destino, assunto, html):
+    from email.header import Header
+    from email.utils import formataddr
+    msg = MIMEMultipart("alternative")
+    msg["Subject"] = str(Header(assunto, "utf-8"))
+    msg["From"] = formataddr((str(Header(SENDER_NAME, "utf-8")), SMTP_USER))
+    msg["To"] = destino
+    msg.attach(MIMEText(html, "html", "utf-8"))
+    return msg
+
+# emojis via escape Unicode (imunes a problema de codificação do arquivo)
+E_PACK = "\U0001F4E6"   # 📦
+E_WAVE = "\U0001F44B"   # 👋
+E_LIST = "\U0001F4CB"   # 📋
+E_LINK = "\U0001F517"   # 🔗
+SETA = "\u25B8"         # ▸
+
+def _data_envio_br(criado_em) -> str:
+    try:
+        s = str(criado_em or "")
+        return datetime.strptime(s[:10], "%Y-%m-%d").strftime("%d/%m/%Y")
+    except Exception:
+        return datetime.now().strftime("%d/%m/%Y")
+
+def _montar_html_email(destinatario: str, codigo: str, descricao: str = "", data_envio: str = "") -> str:
+    nome = _html_escape(str(destinatario or "").strip() or "cliente")
+    cod = _html_escape(str(codigo or ""))
+    link = gerar_link_rastreio(str(codigo or ""))
+    detalhes = [f"{SETA} <b>Código:</b> {cod}"]
+    if str(descricao or "").strip():
+        detalhes.append(f"{SETA} <b>Descrição:</b> {_html_escape(str(descricao).strip())}")
+    detalhes.append(f"{SETA} <b>Data de Envio:</b> {_html_escape(str(data_envio or _data_envio_br(None)))}")
+    return f"""
+<div style="font-family:Arial,Helvetica,sans-serif;max-width:560px;margin:0 auto;color:#222;line-height:1.6">
+  <div style="background:#0f172a;color:#fff;padding:18px 24px;border-radius:10px 10px 0 0">
+    <h2 style="margin:0;font-size:18px">{E_PACK} Correios — Código de Rastreio</h2>
+  </div>
+  <div style="border:1px solid #e2e8f0;border-top:0;padding:24px;border-radius:0 0 10px 10px">
+    <p style="margin:0 0 12px">Olá, <b>{nome}</b>! Tudo bem? {E_WAVE}</p>
+    <p style="margin:0 0 16px">Sua correspondência foi postada e já está em rota de entrega.</p>
+    <p style="margin:0 0 6px"><b>{E_LIST} Detalhes do envio:</b><br>{'<br>'.join(detalhes)}</p>
+    <p style="margin:20px 0">
+      <a href="{link}" style="background:#2563eb;color:#fff;padding:12px 22px;border-radius:8px;text-decoration:none;display:inline-block">{E_LINK} Acompanhar em tempo real</a>
+    </p>
+    <p style="font-size:12px;color:#64748b;word-break:break-all;margin:0 0 16px">Ou copie o link:<br>{link}</p>
+    <p style="margin:0 0 8px">Qualquer dúvida, estamos à disposição!</p>
+    <p style="margin:0">Atenciosamente,<br><b>{_html_escape(SENDER_NAME)}</b></p>
+  </div>
+</div>"""
+
+async def enviar_email(destino, assunto, html) -> bool:
+    if not smtp_configurado():
+        return False
+    try:
+        use_tls = (SMTP_PORT == 465)
+        await aiosmtplib.send(_montar_email(destino, assunto, html),
+            hostname=SMTP_HOST, port=SMTP_PORT,
+            start_tls=(not use_tls), use_tls=use_tls,
+            username=SMTP_USER, password=SMTP_PASS)
+        return True
+    except Exception as e:
+        print(f"[SMTP] falha: {e}")
+        return False
+
+@app.post("/api/notificacoes")
+async def enviar_notificacao(item: NotificacaoItem, usuario: dict = Depends(auth_opcional)):
+    codigo = validar_codigo(item.codigo)
+    canal = str(item.canal or "email").strip().lower()
+    if canal == "whatsapp":
+        return {"success": False, "fallback": True, "message": "WhatsApp via wa.me"}
+    row = await fetch_one("SELECT * FROM envios WHERE codigo = ?", (codigo,))
+    if not row:
+        raise HTTPException(404, "Codigo nao cadastrado")
+    destino = (row["email"] or "").strip()
+    if not destino:
+        return {"success": False, "fallback": True, "message": "Sem e-mail cadastrado"}
+    html = item.mensagem.strip() or _montar_html_email(
+        row["destinatario"] if row else "",
+        codigo,
+        (row["descricao"] if row else "") or "",
+        _data_envio_br(row["criado_em"] if row else None),
+    )
+    ok = await enviar_email(destino, item.assunto or f"{E_PACK} Correios — Código de Rastreio: {codigo}", html)
+    if ok:
+        await execute("UPDATE envios SET status='a_caminho', notificado=1 WHERE codigo=?", (codigo,))
+        return {"success": True, "result": {"enviado": True, "email": destino}}
+    return {"success": False, "fallback": True, "message": "SMTP nao configurado — usar mailto:"}
+
+class MassaItem(BaseModel):
+    canal: str = "email"
+
+@app.post("/api/notificacoes/massa")
+async def notificacao_massa(item: MassaItem, usuario: dict = Depends(auth_opcional)):
+    """Melhoria: notifica pendentes de uma vez (antes: 1 por 1)."""
+    if (item.canal or "email").lower() != "email":
+        raise HTTPException(422, "Massa disponivel para e-mail")
+    if not smtp_configurado():
+        raise HTTPException(422, "SMTP nao configurado")
+    rows = await fetch_all("SELECT * FROM envios WHERE status='pendente' AND email<>'' ORDER BY id")
+    enviadas, falhas = 0, []
+    for r in rows:
+        try:
+            html = _montar_html_email(r.get("destinatario") or "", r.get("codigo") or "",
+                r.get("descricao") or "", _data_envio_br(r.get("criado_em")))
+            ok = await enviar_email((r.get("email") or "").strip(),
+                f"{E_PACK} Correios - Codigo: {r.get('codigo')}", html)
+            if ok:
+                await execute("UPDATE envios SET status='a_caminho', notificado=1, atualizado_em=? WHERE id=?", (_agora_iso(), r["id"]))
+                enviadas += 1
+            else:
+                falhas.append(r.get("codigo"))
+        except Exception:
+            falhas.append(r.get("codigo"))
+    return {"message": f"{enviadas} enviado(s)", "enviadas": enviadas, "falhas": falhas}
+
+@app.post("/api/auth/registrar")
+async def registrar(item: UsuarioCreate, authorization: str = Header(None)):
+    primeiro = await contar_usuarios() == 0
+    admin = True if primeiro else item.admin
+    if not primeiro:
+        if not authorization or not authorization.startswith("Bearer "):
+            raise HTTPException(403, "Registro restrito")
+        try:
+            s = await auth_usuario(authorization)
+        except HTTPException:
+            raise HTTPException(403, "Registro restrito")
+        if not s.get("admin"):
+            raise HTTPException(403, "Apenas administradores")
+    email = item.email.strip().lower()
+    if not REGEX_EMAIL.match(email):
+        raise HTTPException(422, "E-mail invalido")
+    if not item.nome or not item.nome.strip():
+        raise HTTPException(422, "Nome obrigatorio")
+    if len(item.senha) < 8:
+        raise HTTPException(422, "Senha muito curta (minimo 8)")
+    try:
+        _, uid = await execute("INSERT INTO usuarios (nome,email,senha_hash,admin) VALUES (?,?,?,?)",
+            (item.nome.strip(), email, hash_senha(item.senha), 1 if admin else 0))
+    except Exception:
+        raise HTTPException(409, "E-mail ja cadastrado")
+    return {"message": "Usuario criado", "id": uid, "admin": bool(admin)}
+
+@app.post("/api/auth/login")
+async def login(item: LoginItem, request: Request):
+    ip = (request.client.host if request.client else "desconhecido")
+    if _login_bloqueado(ip):
+        raise HTTPException(429, "Muitas tentativas. Aguarde alguns minutos.")
+    email = item.email.strip().lower()
+    row = await fetch_one("SELECT * FROM usuarios WHERE email = ? AND ativo = 1", (email,))
+    if not row or not verificar_senha(item.senha, row["senha_hash"]):
+        _login_registrar_falha(ip)
+        raise HTTPException(401, "E-mail ou senha incorretos")
+    _login_limpar(ip)
+    token = secrets.token_hex(32)
+    if USE_POSTGRES:
+        await execute(f"INSERT INTO sessoes (token,usuario_id,expira_em) VALUES (?,?, NOW() + INTERVAL '{SESSAO_DIAS} days')", (token, row["id"]))
+    else:
+        await execute("INSERT INTO sessoes (token,usuario_id,expira_em) VALUES (?,?,?)", (token, row["id"], _expira_iso(SESSAO_DIAS)))
+    return {"token": token, "user": {"id": row["id"], "nome": row["nome"], "email": row["email"], "admin": bool(row["admin"])}}
+
+@app.post("/api/auth/logout")
+async def logout(authorization: str = Header(None)):
+    """Melhoria: revoga o token no banco (antes so apagava no navegador)."""
+    if authorization and authorization.startswith("Bearer "):
+        try:
+            await execute("DELETE FROM sessoes WHERE token = ?", (authorization[7:].strip(),))
+        except Exception:
+            pass
+    return {"message": "Sessao encerrada"}
+
+class TrocaSenhaItem(BaseModel):
+    senha_atual: str
+    senha_nova: str
+
+@app.post("/api/auth/trocar-senha")
+async def trocar_senha(item: TrocaSenhaItem, usuario: dict = Depends(auth_usuario)):
+    row = await fetch_one("SELECT * FROM usuarios WHERE id = ?", (usuario["id"],))
+    if not row or not verificar_senha(item.senha_atual, row["senha_hash"]):
+        raise HTTPException(401, "Senha atual incorreta")
+    if len(item.senha_nova or "") < 8:
+        raise HTTPException(422, "Senha muito curta (minimo 8)")
+    await execute("UPDATE usuarios SET senha_hash = ? WHERE id = ?", (hash_senha(item.senha_nova), usuario["id"]))
+    return {"message": "Senha alterada"}
+
+@app.get("/api/usuarios")
+async def listar_usuarios(usuario: dict = Depends(auth_usuario)):
+    """Melhoria: gestao de equipe — antes so via SQL direto."""
+    if not usuario.get("admin"):
+        raise HTTPException(403, "Apenas administradores")
+    rows = await fetch_all("SELECT id, nome, email, admin, ativo, criado_em FROM usuarios ORDER BY id")
+    return {"usuarios": [dict(r) for r in rows]}
+
+@app.patch("/api/usuarios/{uid}")
+async def atualizar_usuario(uid: int, payload: dict = Body(...), usuario: dict = Depends(auth_usuario)):
+    if not usuario.get("admin"):
+        raise HTTPException(403, "Apenas administradores")
+    row = await fetch_one("SELECT * FROM usuarios WHERE id = ?", (uid,))
+    if not row:
+        raise HTTPException(404, "Usuario nao encontrado")
+    sets, args = [], []
+    if payload.get("admin", None) is not None:
+        sets.append("admin = ?"); args.append(1 if payload.get("admin") else 0)
+    if payload.get("ativo", None) is not None:
+        if uid == usuario["id"] and not payload.get("ativo"):
+            raise HTTPException(422, "Voce nao pode desativar a si mesmo")
+        sets.append("ativo = ?"); args.append(1 if payload.get("ativo") else 0)
+    if not sets:
+        raise HTTPException(422, "Nada para atualizar")
+    args.append(uid)
+    await execute(f"UPDATE usuarios SET {', '.join(sets)} WHERE id = ?", tuple(args))
+    if payload.get("ativo", None) is not None and not payload.get("ativo"):
+        await execute("DELETE FROM sessoes WHERE usuario_id = ?", (uid,))
+    return {"message": "Usuario atualizado"}
+
+@app.get("/api/envios")
+async def listar_envios(usuario: dict = Depends(auth_opcional),
+    q: str = Query(""), status: str = Query(""),
+    page: int = Query(1, ge=1), limit: int = Query(200, ge=1, le=500)):
+    """Melhoria: paginacao + busca server-side (antes: SELECT * sem limite)."""
+    where, args = [], []
+    if status and status in ("pendente", "a_caminho", "entregue"):
+        where.append("status = ?"); args.append(status)
+    if q:
+        like = f"%{q.strip()}%"
+        where.append("(destinatario LIKE ? OR codigo LIKE ? OR descricao LIKE ?)")
+        args += [like, like, like]
+    w = ("WHERE " + " AND ".join(where)) if where else ""
+    total_row = await fetch_one(f"SELECT COUNT(*) AS n FROM envios {w}", tuple(args))
+    total = int((total_row or {}).get("n", 0))
+    off = (page - 1) * limit
+    rows = await fetch_all(f"SELECT * FROM envios {w} ORDER BY id DESC LIMIT ? OFFSET ?", tuple(args) + (limit, off))
+    return {"envios": [_row_to_envio(r) for r in rows], "total": total, "page": page, "limit": limit}
+
+app.mount("/static", StaticFiles(directory="static"), name="static")
+
+# versao do front: o navegador compara e recarrega sozinho quando o servidor atualiza (evita aba velha travada)
+APP_VERSAO = "21"
+
+@app.get("/api/estatisticas")
+async def estatisticas(usuario: dict = Depends(auth_opcional)):
+    """Melhoria: dashboard contado no SQL (antes: contado no navegador)."""
+    rows = await fetch_all("SELECT status, COUNT(*) AS n FROM envios GROUP BY status")
+    mapa = {r["status"]: int(r["n"]) for r in rows}
+    total = sum(mapa.values())
+    return {"total": total, "pendente": mapa.get("pendente", 0),
+        "a_caminho": mapa.get("a_caminho", 0), "entregue": mapa.get("entregue", 0)}
+
+@app.get("/api/envios/{envio_id}/eventos")
+async def historico_envio(envio_id: int, usuario: dict = Depends(auth_opcional)):
+    rows = await fetch_all("SELECT * FROM eventos WHERE envio_id = ? ORDER BY id DESC LIMIT 50", (envio_id,))
+    return {"eventos": [dict(r) for r in rows]}
+
+@app.get("/api/versao")
+async def versao():
+    return {"versao": APP_VERSAO}
+
+# HTML sempre sem cache: garante que o navegador pegue os ?v= mais novos do JS (evita aba rodando código velho)
+_SEM_CACHE = {"Cache-Control": "no-store"}
+
+@app.get("/")
+async def root():
+    return FileResponse("static/index.html", headers=_SEM_CACHE)
+
+# Aliases de compatibilidade: links/bookmarks antigos apontavam para /main e /login.
+# Servem a mesma tela única (o login é o modal do app.js) — mantidos para não dar 404.
+@app.get("/main")
+async def main_page():
+    return FileResponse("static/index.html", headers=_SEM_CACHE)
+
+@app.get("/login")
+async def login_page():
+    return FileResponse("static/index.html", headers=_SEM_CACHE)
+
+if __name__ == "__main__":
+    import uvicorn
+    uvicorn.run(app, host="0.0.0.0", port=PORT)
