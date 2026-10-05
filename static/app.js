@@ -20,7 +20,7 @@ function _esperaBackoff(){
 function _backendVoltou(){ _tentativasOff = 0; _semBackendDesde = 0; }
 const $ = id => document.getElementById(id);
 const state = { envios: [], db: {}, token: localStorage.getItem('rf_token')||'' };
-const APP_V = '21'; /* versão do front: se o servidor tiver outra, a página se recarrega sozinha */
+const APP_V = '22'; /* versão do front: se o servidor tiver outra, a página se recarrega sozinha */
 window.APP_V = APP_V; /* facilita conferir a versão no console: window.APP_V */
 /* ===== erros visíveis: nada de falhar em silêncio =====
    Se qualquer coisa quebrar, o problema aparece na barra vermelha do rodapé
@@ -221,12 +221,15 @@ async function load(){
   try{
   await checkDB();
   let remotos = [];
+  if(!state.online){ $('btn-backup').hidden = true; }
   if(state.online){
     // se o sistema já tem admin e o navegador não está logado, pede login
     let temUsuarios = false;
     try{
       const est = await api('/auth/estado');
       temUsuarios = !!est.temUsuarios;
+      state.admin = !!est.admin;
+      $('btn-backup').hidden = !state.admin; /* ação reservada a administradores */
       if(temUsuarios && !state.token) pedirLogin('Sistema já configurado — entre com o e-mail/senha do admin para ver e cadastrar envios no banco de dados.');
     }catch(e){}
     // o banco só aceita requisições autenticadas depois que existe usuário cadastrado
@@ -268,19 +271,40 @@ async function load(){
   render();
   } finally { _carregando = false; if(_pendente){ _pendente = false; load(); } }
 }
-function render(){
-  const q = ($('f-busca').value||'').toLowerCase();
+/* ===== melhoria v22: atrasados (+7d), filtro reutilizável e destaque dos cards ===== */
+function tsEnvio(e){
+  let s = String((e && e.criado_em) || '').trim();
+  if(!s) return NaN;
+  s = s.replace(' ', 'T');
+  /* 'YYYY-MM-DDTHH:MM:SS' sem timezone = UTC (SQLite datetime('now') / Postgres) */
+  if(/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}(:\d{2})?$/.test(s)) s += 'Z';
+  return Date.parse(s);
+}
+function ehAtrasado(e){
+  if(uiStatus(e) !== 'pendente') return false;
+  const t = tsEnvio(e);
+  if(isNaN(t)) return false;
+  return (Date.now() - t) > 7 * 24 * 3600 * 1000; /* pendente há mais de 7 dias */
+}
+function filtrados(){
+  const q = ($('f-busca').value || '').toLowerCase();
   const f = $('f-filtro').value;
-  let list = state.envios.filter(e=>{
-    const s = uiStatus(e);
-    const okF = f==='todos' || s===f;
-    const okQ = !q || (e.destinatario+' '+e.codigo+' '+(e.descricao||'')).toLowerCase().includes(q);
+  return state.envios.filter(e => {
+    const okF = f === 'todos' ? true : (f === 'atrasados' ? ehAtrasado(e) : uiStatus(e) === f);
+    const okQ = !q || (e.destinatario + ' ' + e.codigo + ' ' + (e.descricao || '')).toLowerCase().includes(q);
     return okF && okQ;
   });
+}
+function render(){
+  const list = filtrados();
   $('st-total').textContent = state.envios.length;
   $('st-pend').textContent = state.envios.filter(e=>uiStatus(e)==='pendente').length;
   $('st-cam').textContent = state.envios.filter(e=>uiStatus(e)==='a_caminho').length;
   $('st-ent').textContent = state.envios.filter(e=>uiStatus(e)==='entregue').length;
+  const nAtr = state.envios.filter(ehAtrasado).length;
+  $('st-atr').textContent = nAtr;
+  $('card-atr').classList.toggle('alerta-on', nAtr > 0);
+  document.querySelectorAll('.stat[data-filtro]').forEach(c=>c.classList.toggle('ativo', c.dataset.filtro === $('f-filtro').value));
   $('list-count').textContent = list.length;
   $('empty').style.display = list.length ? 'none' : 'block';
   $('lista').innerHTML = list.map(e=>{
@@ -494,6 +518,26 @@ document.getElementById('btn-do-reg').onclick = async ()=>{
   }catch(e){ $('l-err').textContent = e.message; $('l-err').hidden = false; }
 };
 /* listeners + import: funções declaradas abaixo (hoisting) */
+/* melhoria v22: backup do banco (.db) — só aparece e funciona para administrador */
+async function baixarBackup(){
+  try{
+    const r = await fetch(API + '/backup', {headers: headers()});
+    if(!r.ok){
+      let msg = 'HTTP ' + r.status;
+      try{ const d = await r.json(); if(d.detail) msg = d.detail; }catch(e){}
+      throw new Error(msg);
+    }
+    const blob = await r.blob();
+    const cd = r.headers.get('Content-Disposition') || '';
+    const m = cd.match(/filename="?([^";]+)"?/);
+    const a = document.createElement('a');
+    a.href = URL.createObjectURL(blob);
+    a.download = m ? m[1] : 'backup-rastreio.db';
+    a.click();
+    setTimeout(()=>URL.revokeObjectURL(a.href), 5000);
+    toast('Backup baixado.');
+  }catch(err){ toast('Backup falhou: ' + err.message); }
+}
 function boot(){
   /* file:// (arquivo aberto direto no navegador): nada do /static carrega sem servidor e a API é
      inalcançável — avisa uma vez em vez de fingir que está tudo certo */
@@ -571,6 +615,11 @@ function boot(){
   };
   document.getElementById('btn-exp-csv').onclick = exportarCSV;
   document.getElementById('btn-exp-xlsx').onclick = exportarXLSX;
+  $('btn-backup').onclick = baixarBackup;
+  /* melhoria v22: clique nos cards de estatística filtra a lista (mantém select e cards em sincronia) */
+  document.querySelectorAll('.stat[data-filtro]').forEach(c=>{
+    c.onclick = ()=>{ $('f-filtro').value = c.dataset.filtro; render(); };
+  });
 }
 /* ===== importação Excel/CSV (lógica do sistema antigo) ===== */
 function semAcento(s){ return String(s||'').toLowerCase().normalize('NFD').replace(/[^a-z0-9 ]/gi,' '); }
@@ -704,10 +753,11 @@ async function lerArquivo(file){
   }catch(e){ toast('Erro ao ler arquivo: '+e.message); }
 }
 function exportarCSV(){
-  if(!state.envios.length){ toast('Nada para exportar.'); return; }
+  const lista = filtrados(); /* exporta o recorte da tela (filtro/busca ativos) */
+  if(!lista.length){ toast('Nada para exportar (verifique o filtro/busca).'); return; }
   const q2 = v => '"'+String(v??'').replace(/"/g,'""')+'"';
   const csv = ['Nome,Codigo,Celular,Email,Descricao,Status'];
-  state.envios.forEach(e=>csv.push([e.destinatario,e.codigo,e.celular,e.email||'',e.descricao||'',uiStatus(e)].map(q2).join(',')));
+  lista.forEach(e=>csv.push([e.destinatario,e.codigo,e.celular,e.email||'',e.descricao||'',uiStatus(e)].map(q2).join(',')));
   const a = document.createElement('a');
   a.href = URL.createObjectURL(new Blob(["\ufeff"+csv.join('\n'),{type:'text/csv;charset=utf-8'}]));
   a.download = 'envios.csv'; a.click();
@@ -734,9 +784,10 @@ setTimeout(checarVersao, 5000);
 setInterval(checarVersao, 15000);
 /* ===== validação / máscaras (trazidas do sistema antigo) ===== */
 function exportarXLSX(){
-  if(!state.envios.length){ toast('Nada para exportar.'); return; }
+  const lista = filtrados(); /* exporta o recorte da tela (filtro/busca ativos) */
+  if(!lista.length){ toast('Nada para exportar (verifique o filtro/busca).'); return; }
   if(typeof XLSX==='undefined'){ toast('Biblioteca Excel não carregou.'); return; }
-  const ws = XLSX.utils.json_to_sheet(state.envios.map(e=>({Nome:e.destinatario,Codigo:e.codigo,Celular:e.celular,Email:e.email,Descricao:e.descricao,Status:uiStatus(e)})));
+  const ws = XLSX.utils.json_to_sheet(lista.map(e=>({Nome:e.destinatario,Codigo:e.codigo,Celular:e.celular,Email:e.email,Descricao:e.descricao,Status:uiStatus(e)})));
   const wb = XLSX.utils.book_new(); XLSX.utils.book_append_sheet(wb, ws, 'Envios');
   XLSX.writeFile(wb, 'envios.xlsx');
 }

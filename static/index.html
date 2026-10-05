@@ -22,10 +22,11 @@
 </header>
 <main class="wrap">
   <section class="stats">
-    <div class="stat"><span class="stat-ico">📦</span><div><b id="st-total">0</b><small>Total</small></div></div>
-    <div class="stat"><span class="stat-ico">🕐</span><div><b id="st-pend">0</b><small>Pendentes</small></div></div>
-    <div class="stat"><span class="stat-ico">🚚</span><div><b id="st-cam">0</b><small>A caminho</small></div></div>
-    <div class="stat"><span class="stat-ico">📬</span><div><b id="st-ent">0</b><small>Entregues</small></div></div>
+    <div class="stat" data-filtro="todos" title="Clique para listar todos"><span class="stat-ico">📦</span><div><b id="st-total">0</b><small>Total</small></div></div>
+    <div class="stat" data-filtro="pendente" title="Clique para filtrar pendentes"><span class="stat-ico">🕐</span><div><b id="st-pend">0</b><small>Pendentes</small></div></div>
+    <div class="stat" data-filtro="a_caminho" title="Clique para filtrar a caminho"><span class="stat-ico">🚚</span><div><b id="st-cam">0</b><small>A caminho</small></div></div>
+    <div class="stat" data-filtro="entregue" title="Clique para filtrar entregues"><span class="stat-ico">📬</span><div><b id="st-ent">0</b><small>Entregues</small></div></div>
+    <div class="stat stat-alerta" data-filtro="atrasados" id="card-atr" title="Pendentes há mais de 7 dias — clique para filtrar"><span class="stat-ico">⚠️</span><div><b id="st-atr">0</b><small>Atrasados (+7d)</small></div></div>
   </section>
   <section class="grid">
     <div class="card form-card">
@@ -48,14 +49,14 @@
       </div>
       <div class="mini-row">
         <input id="f-busca" placeholder="🔍 Buscar…">
-        <select id="f-filtro"><option value="todos">Todos</option><option value="a_caminho">A caminho</option><option value="pendente">Pendentes</option><option value="entregue">Entregues</option></select>
+        <select id="f-filtro"><option value="todos">Todos</option><option value="a_caminho">A caminho</option><option value="pendente">Pendentes</option><option value="entregue">Entregues</option><option value="atrasados">Atrasados (+7 dias)</option></select>
       </div>
       <div class="import-box">
         <h3>📥 Importar planilha (Excel / CSV)</h3>
         <p class="hint">Arraste um <b>.xlsx</b> / <b>.csv</b> ou clique para selecionar. Colunas: Nome | Código (AA123456789BR) | Celular | E-mail | Descrição (cabeçalho opcional).</p>
         <div class="drop" id="drop">📁 Arraste o arquivo aqui ou clique para selecionar<input type="file" id="f-file" accept=".csv,.xlsx,.xls" hidden></div>
         <textarea id="f-csv" rows="3" placeholder="Maria Silva,AA123456789BR,(11) 91234-5678,maria@email.com,Pedido #1024"></textarea>
-        <div class="import-actions"><button class="chip" id="btn-import-txt">Importar texto</button><button class="chip" id="btn-force-local">💾 Forçar salvamento local</button><button class="chip" id="btn-modelo">Baixar modelo CSV</button><button class="chip" id="btn-exp-csv">Exportar CSV</button><button class="chip" id="btn-exp-xlsx">Exportar Excel</button></div>
+        <div class="import-actions"><button class="chip" id="btn-import-txt">Importar texto</button><button class="chip" id="btn-force-local">💾 Forçar salvamento local</button><button class="chip" id="btn-modelo">Baixar modelo CSV</button><button class="chip" id="btn-exp-csv">Exportar CSV</button><button class="chip" id="btn-exp-xlsx">Exportar Excel</button><button class="chip" id="btn-backup" hidden title="Baixa o banco completo (.db) — apenas administradores">💾 Backup do banco</button></div>
         <p class="hint" id="import-msg"></p>
         <p class="hint">Não funcionou? <a href="/static/resgate.html" target="_blank" style="color:#58a6ff">🛟 Abrir a página de resgate</a> — importa o CSV e grava direto no navegador, sem depender do sistema. Em caso de erro, aparece uma barra vermelha no rodapé desta tela.</p>
       </div>
@@ -111,6 +112,6 @@
   </div>
 </div>
 <script src="/static/libs/xlsx.full.min.js"></script>
-<script src="/static/app.js?v=21"></script>
+<script src="/static/app.js?v=22"></script>
 </body>
 </html>

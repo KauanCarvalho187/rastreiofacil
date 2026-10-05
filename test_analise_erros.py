@@ -110,6 +110,22 @@ check("lista: busca todas as paginas do servidor (nao trava em 200)",
       "'/envios?page='+pagina+'&limit=500'" in js)
 check("rota /api/notificacoes/massa definida uma unica vez (sem duplicata morta)",
       main.count('@app.post("/api/notificacoes/massa")') == 1)
+# melhorias v22 (regressoes — nao remover)
+check("v22: versao front/back em 22 (abas antigas recarregam)",
+      'APP_VERSAO = "22"' in main and "APP_V = '22'" in js and "?v=22" in html)
+check("v22: rota /api/backup existe e exige admin",
+      '@app.get("/api/backup")' in main and 'if not usuario.get("admin")' in main)
+check("v22: /auth/estado informa se o token e de admin",
+      '"admin": admin' in main and "authorization: str = Header(None)" in main)
+check("v22: HTML tem card de atrasados com data-filtro",
+      'data-filtro="atrasados"' in html and 'id="st-atr"' in html)
+check("v22: select tem opcao atrasados (+7 dias)", 'value="atrasados"' in html)
+check("v22: botao backup no HTML (hidden por padrao)", 'id="btn-backup"' in html and 'btn-backup" hidden' in html)
+check("v22: logica de atraso (+7 dias) no JS", "function ehAtrasado" in js and "7 * 24 * 3600 * 1000" in js)
+check("v22: cards de stats filtram a lista (clique)",
+      ".stat[data-filtro]" in js and "c.dataset.filtro" in js)
+check("v22: export CSV/XLSX usa o recorte filtrado", js.count("const lista = filtrados();") >= 2)
+check("v22: JS baixa backup com token", "'/backup'" in js and "baixarBackup" in js)
 print("RESULTADO:", "TUDO OK" if ok else "HA FALHAS")
 sys.exit(0 if ok else 1)
 

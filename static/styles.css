@@ -140,7 +140,7 @@ body {
 }
 .stats {
   display: grid;
-  grid-template-columns: repeat(4, minmax(0, 1fr));
+  grid-template-columns: repeat(5, minmax(0, 1fr));
   gap: 14px;
   margin-bottom: 22px;
 }
@@ -153,6 +153,24 @@ body {
   border: 1px solid var(--line);
   border-radius: var(--radius-md);
   padding: 16px;
+}
+/* melhoria v22: cards de estatistica funcionam como filtro da lista */
+.stat[data-filtro] {
+  cursor: pointer;
+  transition: border-color .15s ease, background .15s ease;
+}
+.stat[data-filtro]:hover {
+  border-color: #58a6ff;
+}
+.stat.ativo {
+  border-color: #58a6ff;
+  background: rgba(88, 166, 255, .08);
+}
+.stat-alerta.alerta-on {
+  border-color: #ff6b6b;
+}
+.stat-alerta.alerta-on b {
+  color: #ff6b6b;
 }
 .stat-ico {
   flex-shrink: 0;

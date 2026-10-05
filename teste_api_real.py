@@ -34,12 +34,25 @@ def req(metodo, caminho, dados=None, token=None):
     except Exception as e:
         return 0, {"erro": str(e)}
 
+def req_raw(metodo, caminho, token=None):
+    """Requisicao bruta (nao interpreta JSON) — usada para baixar o backup .db."""
+    r = urllib.request.Request(BASE + caminho, method=metodo)
+    if token:
+        r.add_header("Authorization", "Bearer " + token)
+    try:
+        with urllib.request.urlopen(r, timeout=15) as resp:
+            return resp.status, len(resp.read()), resp.headers.get("Content-Disposition", "")
+    except urllib.error.HTTPError as e:
+        return e.code, 0, ""
+    except Exception:
+        return 0, 0, ""
+
 def main():
     # 0. saude
     st, d = req("GET", "/api/health")
     check("servidor no ar", st == 200 and d.get("ok") is True, f"st={st}")
     st, d = req("GET", "/api/versao")
-    check("versao 21", d.get("versao") == "21", str(d))
+    check("versao 22", d.get("versao") == "22", str(d))
 
     # 1. login admin
     st, d = req("POST", "/api/auth/login", {"email": "admin@empresa.com", "senha": "admin12345"})
@@ -107,6 +120,16 @@ def main():
     # 12. sem token -> 401
     st, d = req("GET", "/api/usuarios")
     check("sem token bloqueado (401)", st == 401, f"st={st}")
+
+    # 12b. melhorias v22: estado admin + backup do banco
+    st, d = req("GET", "/api/auth/estado", token=tok)
+    check("estado auth informa admin=true", st == 200 and d.get("admin") is True, f"st={st} {d}")
+    st, d = req("GET", "/api/auth/estado")
+    check("estado auth sem token: admin=false", st == 200 and d.get("admin") is False, f"st={st} {d}")
+    st, n, cd = req_raw("GET", "/api/backup", token=tok)
+    check("backup admin baixa arquivo", st == 200 and n > 0 and "backup-rastreio" in cd, f"st={st} n={n} cd={cd}")
+    st, n, cd = req_raw("GET", "/api/backup")
+    check("backup sem token bloqueado (401)", st == 401, f"st={st}")
 
     # 13. logout revoga token
     st, d = req("POST", "/api/auth/logout", {}, tok)

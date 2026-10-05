@@ -24,7 +24,7 @@ from email.mime.multipart import MIMEMultipart
 load_dotenv()
 
 from db import (
-    USE_POSTGRES,
+    USE_POSTGRES, DB_PATH,
     fetch_all, fetch_one, execute, init_db, db_status_info,
 )
 
@@ -261,8 +261,17 @@ async def db_status():
     return st
 
 @app.get("/api/auth/estado")
-async def estado_auth():
-    return {"temUsuarios": await contar_usuarios() > 0}
+async def estado_auth(authorization: str = Header(None)):
+    """Melhoria: informa se o token atual e de um admin (mostra/esconde acoes de backup)."""
+    tem = await contar_usuarios() > 0
+    admin = False
+    if tem and authorization and authorization.startswith("Bearer "):
+        try:
+            u = await auth_usuario(authorization)
+            admin = bool(u.get("admin"))
+        except HTTPException:
+            admin = False
+    return {"temUsuarios": tem, "admin": admin}
 
 
 @app.post("/api/envios")
@@ -647,7 +656,7 @@ async def listar_envios(usuario: dict = Depends(auth_opcional),
 app.mount("/static", StaticFiles(directory="static"), name="static")
 
 # versao do front: o navegador compara e recarrega sozinho quando o servidor atualiza (evita aba velha travada)
-APP_VERSAO = "21"
+APP_VERSAO = "22"
 
 @app.get("/api/estatisticas")
 async def estatisticas(usuario: dict = Depends(auth_opcional)):
@@ -657,6 +666,19 @@ async def estatisticas(usuario: dict = Depends(auth_opcional)):
     total = sum(mapa.values())
     return {"total": total, "pendente": mapa.get("pendente", 0),
         "a_caminho": mapa.get("a_caminho", 0), "entregue": mapa.get("entregue", 0)}
+
+@app.get("/api/backup")
+async def backup_banco(usuario: dict = Depends(auth_usuario)):
+    """Melhoria: backup do banco — admin baixa o SQLite inteiro (restore = copiar o arquivo de volta)."""
+    if not usuario.get("admin"):
+        raise HTTPException(403, "Apenas administradores")
+    if USE_POSTGRES:
+        raise HTTPException(400, "Backup de arquivo disponivel apenas com SQLite (Postgres: use pg_dump)")
+    if not os.path.exists(DB_PATH):
+        raise HTTPException(404, "Arquivo do banco nao encontrado")
+    stamp = datetime.now().strftime("%Y%m%d-%H%M%S")
+    return FileResponse(DB_PATH, media_type="application/octet-stream",
+                        filename=f"backup-rastreio-{stamp}.db")
 
 @app.get("/api/envios/{envio_id}/eventos")
 async def historico_envio(envio_id: int, usuario: dict = Depends(auth_opcional)):
