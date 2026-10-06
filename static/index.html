@@ -26,6 +26,7 @@
     <div class="stat" data-filtro="pendente" title="Clique para filtrar pendentes"><span class="stat-ico">🕐</span><div><b id="st-pend">0</b><small>Pendentes</small></div></div>
     <div class="stat" data-filtro="a_caminho" title="Clique para filtrar a caminho"><span class="stat-ico">🚚</span><div><b id="st-cam">0</b><small>A caminho</small></div></div>
     <div class="stat" data-filtro="entregue" title="Clique para filtrar entregues"><span class="stat-ico">📬</span><div><b id="st-ent">0</b><small>Entregues</small></div></div>
+    <div class="stat" data-filtro="excluido" title="Clique para ver lixeira" id="stat-lix" hidden><span class="stat-ico">🗑️</span><div><b id="st-lix">0</b><small>Lixeira</small></div></div>
   </section>
   <section class="grid">
     <div class="card form-card">
@@ -48,7 +49,7 @@
       </div>
       <div class="mini-row">
         <input id="f-busca" placeholder="🔍 Buscar…">
-        <select id="f-filtro"><option value="todos">Todos</option><option value="a_caminho">A caminho</option><option value="pendente">Pendentes</option><option value="entregue">Entregues</option></select>
+        <select id="f-filtro"><option value="todos">Todos</option><option value="a_caminho">A caminho</option><option value="pendente">Pendentes</option><option value="entregue">Entregues</option><option value="excluido">🗑️ Lixeira</option></select>
       </div>
       <div class="import-box">
         <h3>📥 Importar planilha (Excel / CSV)</h3>

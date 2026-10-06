@@ -86,8 +86,10 @@ st, b = raw("GET", "/api/envios", None, {"Authorization": "Bearer"})
 check("B: header Bearer vazio -> 401/403 (nao 500)", st in (401, 403) or status_ok_500(st), str(st))
 
 # ---------------- unicode roundtrip ----------------
+import time
 NOME_B = "José André Ção 📦"
-st, b = raw("POST", "/api/envios", {"destinatario": NOME_B, "codigo": "BB987654321BR",
+codigo_b = "BB" + str(int(time.time()*1000)%1000000000).zfill(9) + "BR"
+st, b = raw("POST", "/api/envios", {"destinatario": NOME_B, "codigo": codigo_b,
     "email": "bordas@exemplo.com"}, AH)
 criado_b = st == 200
 id_b = None
@@ -102,7 +104,7 @@ except Exception:
     acha = False
 check("B: unicode roundtrip", criado_b and acha, f"{st} {b[:120]}")
 
-# ---------------- eventos: historico existe e DELETE limpa ----------------
+# ---------------- eventos: historico existe e DELETE (soft) mantem ----------------
 st, b = raw("PUT", f"/api/envios/{id_b}", {"status": "a_caminho"}, AH)
 check("B: mudar status gera evento", st == 200, str(st))
 st, b = raw("GET", f"/api/envios/{id_b}/eventos", None, AH)
@@ -112,15 +114,44 @@ except Exception:
     n_antes = 0
 check("B: historico tem evento", n_antes >= 1, str(n_antes))
 
+# Soft delete: move to lixeira, KEEPS events (audit trail)
 st, b = raw("DELETE", f"/api/envios/{id_b}", None, AH)
-check("B: DELETE ok", st == 200, str(st))
+check("B: DELETE ok (soft -> lixeira)", st == 200 and json.loads(b).get("message") == "Envio movido para lixeira", str(st))
 st, b = raw("GET", f"/api/envios/{id_b}/eventos", None, AH)
 try:
-    n_depois = len(json.loads(b)["eventos"])
+    n_depois_soft = len(json.loads(b)["eventos"])
 except Exception:
-    n_depois = -1
-check("B: DELETE limpa historico (sem orfaos)", n_depois == 0,
-      f"eventos orfaos restantes: {n_depois}")
+    n_depois_soft = -1
+# Soft delete cria evento "Movido para lixeira", então total = n_antes + 1
+check("B: soft DELETE MANTÉM historico (auditoria) + cria evento lixeira", n_depois_soft == n_antes + 1 and n_antes >= 1,
+      f"antes={n_antes} depois={n_depois_soft}")
+
+# Verifica que está na lixeira
+st, b = raw("GET", "/api/envios?status=excluido&q=" + quote("José"), None, AH)
+try:
+    na_lixeira = any(e["_id"] == id_b for e in json.loads(b)["envios"])
+except Exception:
+    na_lixeira = False
+check("B: item soft-deletado aparece na lixeira", na_lixeira, f"{st} {b[:80]}")
+
+# Restaurar da lixeira
+st, b = raw("POST", f"/api/envios/{id_b}/restaurar", None, AH)
+check("B: restaurar da lixeira", st == 200 and "restaurado" in json.loads(b).get("message", ""), f"{st} {b[:80]}")
+
+# Para purgar, precisa estar na lixeira: soft delete novamente
+st, b = raw("DELETE", f"/api/envios/{id_b}", None, AH)
+check("B: soft delete novamente para purga", st == 200 and json.loads(b).get("message") == "Envio movido para lixeira", f"{st} {b[:80]}")
+
+# Purga (hard delete) - remove eventos
+st, b = raw("DELETE", f"/api/envios/{id_b}/purga", None, AH)
+check("B: PURGA definitiva", st == 200 and json.loads(b).get("message") == "Envio removido permanentemente", f"{st} {b[:80]}")
+st, b = raw("GET", f"/api/envios/{id_b}/eventos", None, AH)
+try:
+    n_depois_purga = len(json.loads(b)["eventos"])
+except Exception:
+    n_depois_purga = -1
+check("B: PURGA limpa historico (sem orfaos)", n_depois_purga == 0,
+      f"eventos orfaos restantes: {n_depois_purga}")
 
 # eventos de envio inexistente -> lista vazia (nao 500)
 st, b = raw("GET", "/api/envios/999999999/eventos", None, AH)
@@ -135,13 +166,7 @@ st, b = raw("POST", "/api/notificacoes", {"codigo": "BB987654321BR", "canal": "p
 check("B: canal invalido -> 422 (nao 500)", st in (422, 404) or status_ok_500(st), str(st))
 
 # ---------------- limpeza ----------------
-st, b = raw("DELETE", f"/api/envios/{id_b}", None, AH) if id_b else (0, "")
-try:
-    st2, b2 = raw("GET", "/api/envios?q=BB987654321BR", None, AH)
-    for e in json.loads(b2).get("envios", []):
-        raw("DELETE", f"/api/envios/{e['_id']}", None, AH)
-except Exception:
-    pass
+# id_b já foi purgado acima
 
 print(f"\nBORDAS: {ok} passou, {fal} falhou")
 exit(1 if fal else 0)

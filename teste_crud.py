@@ -132,19 +132,34 @@ check("U: entregue continua entregue", alvo and alvo["status"] == "entregue", st
 st, d = api("PATCH", f"/api/envios/999999/status", {"status": "entregue"}, tok)
 check("U: PATCH id inexistente = 404", st == 404, f"st={st}")
 
-# ---------- DELETE ----------
+# ---------- DELETE (soft delete) ----------
 st, d = api("DELETE", f"/api/envios/{id1}", None, tok)
-check("D: delete existe", st == 200, f"st={st} {d}")
-st, d = api("DELETE", f"/api/envios/{id1}", None, tok)
-check("D: delete duas vezes = 404", st == 404, f"st={st}")
+check("D: delete existe (soft)", st == 200 and d.get("message") == "Envio movido para lixeira", f"st={st} {d}")
+# default list should not show it
 st, d = api("GET", "/api/envios?limit=500", None, tok)
 resta = [e["_id"] for e in d.get("envios", []) if e["_id"] in criados]
-check("D: removido da listagem", id1 not in resta, str(resta)[:120])
+check("D: removido da listagem (default)", id1 not in resta, str(resta)[:120])
+# lixeira should have it
+st, d = api("GET", "/api/envios?status=excluido&limit=500", None, tok)
+lixo_list = [e["_id"] for e in d.get("envios", []) if e["_id"] in criados]
+check("D: aparece na lixeira", id1 in lixo_list, str(lixo_list)[:120])
+# second delete (soft) on same id should still return 200 (idempotent soft delete)
+st, d = api("DELETE", f"/api/envios/{id1}", None, tok)
+check("D: delete duas vezes = 200 (idempotente soft)", st == 200, f"st={st}")
+# purge (hard delete) - admin only
+st, d = api("DELETE", f"/api/envios/{id1}/purga", None, tok)
+check("D: purga definitiva", st == 200 and d.get("message") == "Envio removido permanentemente", f"st={st} {d}")
+# now should be gone from lixeira too
+st, d = api("GET", "/api/envios?status=excluido&limit=500", None, tok)
+lixo2 = [e["_id"] for e in d.get("envios", []) if e["_id"] in criados]
+check("D: purga remove da lixeira", id1 not in lixo2, str(lixo2)[:120])
 
 # ---------- LIMPEZA ----------
 sobra = [i for i in set(criados) if i != id1] + ([id2] if id2 else [])
 for i in sobra:
+    # soft delete + purge each
     api("DELETE", f"/api/envios/{i}", None, tok)
+    api("DELETE", f"/api/envios/{i}/purga", None, tok)
 st, d = api("GET", "/api/envios?limit=500", None, tok)
 lixo = [e["codigo"] for e in d.get("envios", []) if str(e["codigo"]).startswith("CR")]
 check("limpeza: nada CR* sobrou", not lixo, str(lixo))

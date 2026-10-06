@@ -143,6 +143,14 @@ async def init_db():
                 cols = [r[1] for r in await cur.fetchall()]
                 if "atualizado_em" not in cols:
                     await db.execute("ALTER TABLE envios ADD COLUMN atualizado_em TEXT DEFAULT (datetime('now'))")
+                # migração lixeira: colunas para soft delete
+                for col, ddl in [
+                    ("excluido_por", "INTEGER DEFAULT NULL"),
+                    ("excluido_em", "TEXT DEFAULT NULL"),
+                    ("status_anterior", "TEXT DEFAULT NULL"),
+                ]:
+                    if col not in cols:
+                        await db.execute(f"ALTER TABLE envios ADD COLUMN {col} {ddl}")
             except Exception:
                 pass
             await db.commit()

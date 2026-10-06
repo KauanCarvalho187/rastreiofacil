@@ -162,6 +162,13 @@ def _row_to_envio(row: dict) -> dict:
     notificado = bool(row.get("notificado"))
     criado = row.get("criado_em")
     criado_s = str(criado) if criado is not None else ""
+    # campos de lixeira (apenas admin vê quem excluiu)
+    excluido_por = row.get("excluido_por")
+    excluido_em = row.get("excluido_em")
+    status_anterior = row.get("status_anterior")
+    # nomes dos usuários (via JOIN em listar_envios)
+    criado_por_nome = row.get("criado_por_nome")
+    excluido_por_nome = row.get("excluido_por_nome")
     return {
         "_id": row.get("id"),
         "destinatario": row.get("destinatario") or "",
@@ -173,6 +180,12 @@ def _row_to_envio(row: dict) -> dict:
         "notificado": notificado,
         "criado_em": criado_s,
         "link": gerar_link_rastreio(row.get("codigo") or ""),
+        # lixeira
+        "excluido_por": excluido_por,
+        "excluido_em": excluido_em,
+        "status_anterior": status_anterior,
+        "criado_por_nome": criado_por_nome,
+        "excluido_por_nome": excluido_por_nome,
     }
 
 class EnvioUpdate(BaseModel):
@@ -415,13 +428,46 @@ async def marcar_notificado(envio_id: int, payload: dict = Body({}), usuario: di
 
 @app.delete("/api/envios/{envio_id}")
 async def deletar_envio(envio_id: int, usuario: dict = Depends(auth_opcional)):
-    n,_ = await execute("DELETE FROM envios WHERE id=?", (envio_id,))
-    if n == 0:
+    # Soft delete: move para lixeira (status='excluido'), guarda quem excluiu e status anterior
+    row = await fetch_one("SELECT id, status FROM envios WHERE id=?", (envio_id,))
+    if not row:
         raise HTTPException(404, "Envio nao encontrado")
-    # integridade: o schema nao tem FK/cascade — sem isto o historico do envio
-    # ficaria orfao para sempre (bug: teste_bordas "DELETE limpa historico")
+    status_anterior = row["status"]
+    await execute("""
+        UPDATE envios 
+        SET status='excluido', excluido_por=?, excluido_em=?, status_anterior=?
+        WHERE id=?
+    """, (usuario["id"], _agora_iso(), status_anterior, envio_id))
+    await registrar_evento(envio_id, status_anterior, "excluido", usuario["id"], "Movido para lixeira")
+    return {"message": "Envio movido para lixeira"}
+
+@app.post("/api/envios/{envio_id}/restaurar")
+async def restaurar_envio(envio_id: int, usuario: dict = Depends(auth_usuario)):
+    # Apenas admin pode restaurar
+    if not usuario.get("admin"):
+        raise HTTPException(403, "Apenas administradores podem restaurar da lixeira")
+    row = await fetch_one("SELECT id, status_anterior FROM envios WHERE id=? AND status='excluido'", (envio_id,))
+    if not row:
+        raise HTTPException(404, "Envio nao encontrado na lixeira")
+    status_voltar = row["status_anterior"] or "pendente"
+    await execute("""
+        UPDATE envios 
+        SET status=?, excluido_por=NULL, excluido_em=NULL, status_anterior=NULL
+        WHERE id=?
+    """, (status_voltar, envio_id))
+    await registrar_evento(envio_id, "excluido", status_voltar, usuario["id"], "Restaurado da lixeira")
+    return {"message": f"Envio restaurado como {status_voltar}"}
+
+@app.delete("/api/envios/{envio_id}/purga")
+async def purgar_envio(envio_id: int, usuario: dict = Depends(auth_usuario)):
+    # Hard delete definitivo — apenas admin
+    if not usuario.get("admin"):
+        raise HTTPException(403, "Apenas administradores")
+    n,_ = await execute("DELETE FROM envios WHERE id=? AND status='excluido'", (envio_id,))
+    if n == 0:
+        raise HTTPException(404, "Envio nao encontrado na lixeira")
     await execute("DELETE FROM eventos WHERE envio_id=?", (envio_id,))
-    return {"message": "Envio removido"}
+    return {"message": "Envio removido permanentemente"}
 
 def _montar_email(destino, assunto, html):
     from email.header import Header
@@ -641,10 +687,17 @@ async def atualizar_usuario(uid: int, payload: dict = Body(...), usuario: dict =
 async def listar_envios(usuario: dict = Depends(auth_opcional),
     q: str = Query(""), status: str = Query(""),
     page: int = Query(1, ge=1), limit: int = Query(200, ge=1, le=500)):
-    """Melhoria: paginacao + busca server-side (antes: SELECT * sem limite)."""
+    """Melhoria: paginacao + busca server-side (antes: SELECT * sem limite).
+       Suporta filtro status='excluido' (lixeira). JOIN usuarios para nomes.
+       Por padrao EXCLUI lixeira (status='excluido') da listagem normal."""
     where, args = [], []
-    if status and status in ("pendente", "a_caminho", "entregue"):
+    valid_status = ("pendente", "a_caminho", "entregue", "excluido")
+    active_status = ("pendente", "a_caminho", "entregue")
+    # Se status nao informado, filtra apenas status ativos (exclui lixeira)
+    if status and status in valid_status:
         where.append("status = ?"); args.append(status)
+    elif not status:
+        where.append("status IN (?,?,?)"); args += active_status
     if q:
         like = f"%{q.strip()}%"
         where.append("(destinatario LIKE ? OR codigo LIKE ? OR descricao LIKE ?)")
@@ -653,7 +706,19 @@ async def listar_envios(usuario: dict = Depends(auth_opcional),
     total_row = await fetch_one(f"SELECT COUNT(*) AS n FROM envios {w}", tuple(args))
     total = int((total_row or {}).get("n", 0))
     off = (page - 1) * limit
-    rows = await fetch_all(f"SELECT * FROM envios {w} ORDER BY id DESC LIMIT ? OFFSET ?", tuple(args) + (limit, off))
+    # JOIN usuarios para nomes: criado_por_nome e (se admin) excluido_por_nome
+    is_admin = bool(usuario and usuario.get("admin"))
+    join_excluido = "LEFT JOIN usuarios u_del ON u_del.id = e.excluido_por" if is_admin else ""
+    select_excluido = "u_del.nome AS excluido_por_nome" if is_admin else "NULL AS excluido_por_nome"
+    sql = f"""
+        SELECT e.*, u_cri.nome AS criado_por_nome, {select_excluido}
+        FROM envios e
+        LEFT JOIN usuarios u_cri ON u_cri.id = e.criado_por
+        {join_excluido}
+        {w}
+        ORDER BY e.id DESC LIMIT ? OFFSET ?
+    """
+    rows = await fetch_all(sql, tuple(args) + (limit, off))
     return {"envios": [_row_to_envio(r) for r in rows], "total": total, "page": page, "limit": limit}
 
 app.mount("/static", StaticFiles(directory="static"), name="static")

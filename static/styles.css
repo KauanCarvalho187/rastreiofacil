@@ -494,6 +494,34 @@ body {
   color: #f87171;
 }
 
+.chip.success {
+  color: #4ade80;
+  border-color: #4ade80;
+}
+
+.toast-action:hover {
+  background: #1d4ed8 !important;
+}
+
+.item .autor {
+  color: var(--mut);
+  font-size: 11px;
+  margin-top: 2px;
+  display: block;
+}
+
+.item .meta {
+  color: #888;
+  font-size: 11px;
+  margin-top: 2px;
+  display: block;
+}
+
+.badge--excluido {
+  background: #7f1d1d;
+  color: #fecaca;
+}
+
 .toast {
   position: fixed;
   bottom: 24px;

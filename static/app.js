@@ -103,9 +103,38 @@ async function copiarTexto(t){
   }
 }
 const headers = () => state.token ? {'Content-Type':'application/json','Authorization':'Bearer '+state.token} : {'Content-Type':'application/json'};
-function toast(m){ $('toast-msg').textContent = m; $('toast').classList.add('show'); clearTimeout(window._t); window._t = setTimeout(()=>$('toast').classList.remove('show'), 2600); }
-function uiStatus(e){ const s=(e.status||'pendente'); if(s==='entregue') return 'entregue'; if(s==='a_caminho') return 'a_caminho'; return 'pendente'; }
-function badge(s){ return s==='entregue' ? '<span class="badge b-entregue">entregue</span>' : s==='a_caminho' ? '<span class="badge b-a_caminho">a caminho</span>' : '<span class="badge b-pendente">pendente</span>'; }
+function toast(m, acao){
+  const msgEl = $('toast-msg');
+  const toastEl = $('toast');
+  if(typeof m === 'object' && m !== null){
+    acao = m.acao;
+    m = m.msg || m.message || '';
+  }
+  msgEl.textContent = m;
+  // remove botão de ação anterior se houver
+  const oldBtn = toastEl.querySelector('.toast-action');
+  if(oldBtn) oldBtn.remove();
+  if(acao && acao.texto && typeof acao.fn === 'function'){
+    const btn = document.createElement('button');
+    btn.className = 'toast-action';
+    btn.textContent = acao.texto;
+    btn.style.marginLeft = '12px';
+    btn.style.padding = '4px 10px';
+    btn.style.border = 'none';
+    btn.style.borderRadius = '4px';
+    btn.style.background = '#2563eb';
+    btn.style.color = '#fff';
+    btn.style.cursor = 'pointer';
+    btn.style.fontSize = '12px';
+    btn.onclick = ()=>{ acao.fn(); toastEl.classList.remove('show'); };
+    msgEl.appendChild(btn);
+  }
+  toastEl.classList.add('show');
+  clearTimeout(window._t);
+  window._t = setTimeout(()=>toastEl.classList.remove('show'), 5000); // mais tempo para ler + clicar desfazer
+}
+function uiStatus(e){ const s=(e.status||'pendente'); if(s==='entregue') return 'entregue'; if(s==='a_caminho') return 'a_caminho'; if(s==='excluido') return 'excluido'; return 'pendente'; }
+function badge(s){ return s==='entregue' ? '<span class="badge b-entregue">entregue</span>' : s==='a_caminho' ? '<span class="badge b-a_caminho">a caminho</span>' : s==='excluido' ? '<span class="badge badge--excluido">lixeira</span>' : '<span class="badge b-pendente">pendente</span>'; }
 function esc(s){ const m = {'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}; return String(s ?? '').replace(/[&<>"']/g, c=>m[c]); }
 /* validação (topo: boot() usa estas funções/consts) */
 const RX_COD = /^[A-Z]{2}\d{9}BR$/;
@@ -268,6 +297,9 @@ async function load(){
     }
   }
   state.envios = [...remotos, ...lerLocais()];
+  // mostra/oculta stat de lixeira conforme admin
+  const statLix = $('stat-lix');
+  if(statLix) statLix.hidden = !state.admin;
   render();
   } finally { _carregando = false; if(_pendente){ _pendente = false; load(); } }
 }
@@ -283,29 +315,37 @@ function filtrados(){
 }
 function render(){
   const list = filtrados();
+  const isAdmin = !!state.admin;
   $('st-total').textContent = state.envios.length;
   $('st-pend').textContent = state.envios.filter(e=>uiStatus(e)==='pendente').length;
   $('st-cam').textContent = state.envios.filter(e=>uiStatus(e)==='a_caminho').length;
   $('st-ent').textContent = state.envios.filter(e=>uiStatus(e)==='entregue').length;
+  $('st-lix').textContent = state.envios.filter(e=>uiStatus(e)==='excluido').length;
   document.querySelectorAll('.stat[data-filtro]').forEach(c=>c.classList.toggle('ativo', c.dataset.filtro === $('f-filtro').value));
   $('list-count').textContent = list.length;
   $('empty').style.display = list.length ? 'none' : 'block';
   $('lista').innerHTML = list.map(e=>{
     const s = uiStatus(e);
     const contato = [e.email, e.celular ? mascararFoneBR(e.celular) : ''].filter(Boolean).join(' • ') || 'sem contato';
+    const autor = e.criado_por_nome ? '👤 '+esc(e.criado_por_nome) : '';
+    const delInfo = (s==='excluido' && isAdmin && e.excluido_por_nome) ? ' 🗑️ por '+esc(e.excluido_por_nome) : '';
+    const restoredFrom = (s==='excluido' && e.status_anterior) ? ' (era: '+esc(e.status_anterior)+')' : '';
     return '<div class="item" data-id="'+e._id+'">'
       +'<div class="item-top"><b>'+esc(e.destinatario)+'</b>'+badge(s)+'</div>'
       +'<code>'+esc(e.codigo)+'</code>'
-      +'<small>'+esc(contato)+(e.descricao ? ' — '+esc(e.descricao) : '')+'</small>'
+      +'<small class="autor">'+esc(contato)+(e.descricao ? ' — '+esc(e.descricao) : '')+'</small>'
+      +'<small class="meta">'+autor+delInfo+restoredFrom+'</small>'
       +'<div class="item-actions">'
-      +(s!=='a_caminho' ? '<button class="chip" data-act="a_caminho">A caminho</button>' : '')
-      +(s!=='entregue' ? '<button class="chip" data-act="entregue">Entregue</button>' : '')
-      +(s!=='pendente' ? '<button class="chip" data-act="pendente">Pendente</button>' : '')
-      +'<button class="chip" data-act="wa">WhatsApp</button>'
-      +'<button class="chip" data-act="mail">E-mail</button>'
-      +'<button class="chip" data-act="track">Rastrear</button>'
-      +'<button class="chip" data-act="edit">✏️ Editar</button>'
-      +'<button class="chip danger" data-act="del">Excluir</button>'
+      +(s==='excluido' && isAdmin ? '<button class="chip success" data-act="restaurar">♻️ Restaurar</button>' : '')
+      +(s!=='a_caminho' && s!=='excluido' ? '<button class="chip" data-act="a_caminho">A caminho</button>' : '')
+      +(s!=='entregue' && s!=='excluido' ? '<button class="chip" data-act="entregue">Entregue</button>' : '')
+      +(s!=='pendente' && s!=='excluido' ? '<button class="chip" data-act="pendente">Pendente</button>' : '')
+      +(s!=='excluido' ? '<button class="chip" data-act="wa">WhatsApp</button>' : '')
+      +(s!=='excluido' ? '<button class="chip" data-act="mail">E-mail</button>' : '')
+      +(s!=='excluido' ? '<button class="chip" data-act="track">Rastrear</button>' : '')
+      +(s!=='excluido' ? '<button class="chip" data-act="edit">✏️ Editar</button>' : '')
+      +(s!=='excluido' ? '<button class="chip danger" data-act="del">Excluir</button>' : '')
+      +(s==='excluido' && isAdmin ? '<button class="chip danger" data-act="purga">🗑️ Apagar def.</button>' : '')
       +'</div></div>';
   }).join('');
 }
@@ -320,9 +360,43 @@ document.getElementById('lista').addEventListener('click', async ev=>{
   try{
     if(act==='edit'){ abrirEdicao(id, e, local); return; }
     if(act==='del'){
-      if(!confirm('Excluir este envio?')) return;
-      if(local){ gravarLocais(lerLocais().filter(x=>String(x._id)!==String(id))); toast('Excluído (local).'); }
-      else { await api('/envios/'+id,{method:'DELETE'}); toast('Excluído.'); }
+      // Confirmação rica com detalhes do envio
+      const detalhes = [
+        'Destinatário: ' + e.destinatario,
+        'Código: ' + e.codigo,
+        'Status: ' + uiStatus(e),
+        'Criado por: ' + (e.criado_por_nome || '—'),
+        '',
+        'O envio será movido para a LIXEIRA (pode ser restaurado pelo admin).',
+        'Confirma a exclusão?'
+      ].join('\n');
+      if(!confirm(detalhes)) return;
+      if(local){
+        gravarLocais(lerLocais().filter(x=>String(x._id)!==String(id)));
+        toast('Excluído (local).');
+      }else{
+        await api('/envios/'+id,{method:'DELETE'});
+        // Toast com ação "Desfazer" (restaura via admin endpoint)
+        const msg = 'Envio movido para lixeira';
+        const acao = {texto: 'Desfazer', fn: async ()=>{
+          try{
+            await api('/envios/'+id+'/restaurar',{method:'POST'});
+            toast('Envio restaurado!');
+            await load();
+          }catch(err){ toast('Erro ao restaurar: '+err.message); }
+        }};
+        toast(msg, acao);
+      }
+    }
+    else if(act==='restaurar'){
+      if(!confirm('Restaurar este envio da lixeira?')) return;
+      await api('/envios/'+id+'/restaurar',{method:'POST'});
+      toast('Envio restaurado!');
+    }
+    else if(act==='purga'){
+      if(!confirm('APAGAR DEFINITIVAMENTE este envio?\n\nEsta ação NÃO PODE SER DESFEITA.\nO histórico de eventos também será removido.')) return;
+      await api('/envios/'+id+'/purga',{method:'DELETE'});
+      toast('Envio removido permanentemente.');
     }
     else if(act==='pendente'||act==='a_caminho'||act==='entregue'){
       if(local){ atualizarLocal(it=>{ it.status = act; it.notificado = act==='pendente' ? 0 : 1; }); toast('Status atualizado (local).'); }

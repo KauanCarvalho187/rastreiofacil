@@ -106,12 +106,27 @@ def main():
     st, d = req("GET", f"/api/envios/{id2}/eventos", token=tok)
     check("historico gravado", st == 200 and len(d.get("eventos", [])) >= 1, str(d))
 
-    # 10. exclui 1
+    # 10. exclui 1 (soft delete -> lixeira)
     id4 = ids.get("FQ423456789BR")
     st, d = req("DELETE", f"/api/envios/{id4}", token=tok)
-    check("exclusao", st == 200, f"st={st} {d}")
+    check("exclusao (soft delete)", st == 200 and d.get("message") == "Envio movido para lixeira", f"st={st} {d}")
     st, d = req("GET", "/api/envios", token=tok)
-    check("total -1 apos exclusao", d.get("total") == total0 - 1, f"{d.get('total')} vs {total0 - 1}")
+    check("total -1 apos exclusao (default exclui lixeira)", d.get("total") == total0 - 1, f"{d.get('total')} vs {total0 - 1}")
+    st, d = req("GET", "/api/envios?status=excluido", token=tok)
+    check("lixeira tem o item excluido", st == 200 and d.get("total") == 1 and d.get("envios", [])[0].get("_id") == id4, f"st={st} {d}")
+    # restaurar
+    st, d = req("POST", f"/api/envios/{id4}/restaurar", token=tok)
+    check("restaurar da lixeira", st == 200 and d.get("message", "").startswith("Envio restaurado"), f"st={st} {d}")
+    st, d = req("GET", "/api/envios", token=tok)
+    check("total volta apos restaurar", d.get("total") == total0, f"{d.get('total')} vs {total0}")
+    # soft delete novamente para poder purgar
+    st, d = req("DELETE", f"/api/envios/{id4}", token=tok)
+    check("exclusao novamente para purga", st == 200 and d.get("message") == "Envio movido para lixeira", f"st={st} {d}")
+    # purge (hard delete) - apenas admin
+    st, d = req("DELETE", f"/api/envios/{id4}/purga", token=tok)
+    check("purga definitiva", st == 200 and d.get("message") == "Envio removido permanentemente", f"st={st} {d}")
+    st, d = req("GET", "/api/envios", token=tok)
+    check("total -1 apos purga", d.get("total") == total0 - 1, f"{d.get('total')} vs {total0 - 1}")
 
     # 11. usuarios
     st, d = req("GET", "/api/usuarios", token=tok)
