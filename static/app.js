@@ -300,6 +300,18 @@ async function load(){
   // mostra/oculta stat de lixeira conforme admin
   const statLix = $('stat-lix');
   if(statLix) statLix.hidden = !state.admin;
+  // Busca contador da lixeira separadamente (API por padrão não traz excluidos)
+  if(state.admin){
+    try{
+      const lixeiraResp = await api('/envios?status=excluido&limit=1');
+      // O total vem no response mesmo com limit=1
+      state.lixeiraTotal = lixeiraResp.total || 0;
+    }catch(e){
+      state.lixeiraTotal = 0;
+    }
+  }else{
+    state.lixeiraTotal = 0;
+  }
   render();
   } finally { _carregando = false; if(_pendente){ _pendente = false; load(); } }
 }
@@ -320,7 +332,7 @@ function render(){
   $('st-pend').textContent = state.envios.filter(e=>uiStatus(e)==='pendente').length;
   $('st-cam').textContent = state.envios.filter(e=>uiStatus(e)==='a_caminho').length;
   $('st-ent').textContent = state.envios.filter(e=>uiStatus(e)==='entregue').length;
-  $('st-lix').textContent = state.envios.filter(e=>uiStatus(e)==='excluido').length;
+  $('st-lix').textContent = state.lixeiraTotal || 0;
   document.querySelectorAll('.stat[data-filtro]').forEach(c=>c.classList.toggle('ativo', c.dataset.filtro === $('f-filtro').value));
   $('list-count').textContent = list.length;
   $('empty').style.display = list.length ? 'none' : 'block';
