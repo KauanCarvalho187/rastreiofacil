@@ -153,6 +153,76 @@ except Exception:
 check("B: PURGA limpa historico (sem orfaos)", n_depois_purga == 0,
       f"eventos orfaos restantes: {n_depois_purga}")
 
+# ================= PERMISSÕES LIXEIRA: usuário apaga, admin restaura =================
+# Cria outro item de teste para testar permissões
+import time
+NOME_PERM = "Teste Permissao Lixeira"
+codigo_perm = "PP" + str(int(time.time()*1000)%1000000000).zfill(9) + "BR"
+st, b = raw("POST", "/api/envios", {"destinatario": NOME_PERM, "codigo": codigo_perm,
+    "email": "perm@teste.com"}, AH)
+criado_perm = st == 200
+id_perm = None
+try:
+    id_perm = json.loads(b)["envios"][0]["_id"]
+except Exception:
+    pass
+
+# Login do usuário comum (joao)
+st, b = raw("POST", "/api/auth/login", {"email": "joao@empresa.com", "senha": "joao12345"})
+joao_tok = json.loads(b)["token"] if st == 200 else None
+AH_JOAO = {"Authorization": "Bearer " + joao_tok} if joao_tok else None
+
+# Login do usuário comum (maria)
+st, b = raw("POST", "/api/auth/login", {"email": "maria@empresa.com", "senha": "maria12345"})
+maria_tok = json.loads(b)["token"] if st == 200 else None
+AH_MARIA = {"Authorization": "Bearer " + maria_tok} if maria_tok else None
+
+if criado_perm and id_perm and AH_JOAO and AH_MARIA:
+    # 1. Usuário comum (João) APAGA o envio (soft delete) - DEVE FUNCIONAR
+    st, b = raw("DELETE", f"/api/envios/{id_perm}", None, AH_JOAO)
+    check("B: user comum PODE apagar (soft delete)", st == 200 and json.loads(b).get("message") == "Envio movido para lixeira", f"{st} {b[:80]}")
+    
+    # 2. Mesmo usuário (João) tenta RESTAURAR - DEVE FALHAR (403)
+    st, b = raw("POST", f"/api/envios/{id_perm}/restaurar", None, AH_JOAO)
+    check("B: user comum NÃO PODE restaurar (403)", st == 403, f"{st} {b[:80]}")
+    
+    # 3. Outro usuário comum (Maria) tenta RESTAURAR - DEVE FALHAR (403)
+    st, b = raw("POST", f"/api/envios/{id_perm}/restaurar", None, AH_MARIA)
+    check("B: outro user comum NÃO PODE restaurar (403)", st == 403, f"{st} {b[:80]}")
+    
+    # 4. User comum tenta PURGAR - DEVE FALHAR (403)
+    st, b = raw("DELETE", f"/api/envios/{id_perm}/purga", None, AH_JOAO)
+    check("B: user comum NÃO PODE purgar (403)", st == 403, f"{st} {b[:80]}")
+    
+    # 5. Admin RESTAURA - DEVE FUNCIONAR
+    st, b = raw("POST", f"/api/envios/{id_perm}/restaurar", None, AH)
+    check("B: admin PODE restaurar", st == 200 and "restaurado" in json.loads(b).get("message", ""), f"{st} {b[:80]}")
+    
+    # 6. Item deve voltar à lista normal
+    st, b = raw("GET", "/api/envios?q=" + quote("Teste Permissao"), None, AH)
+    try:
+        voltou = any(e["_id"] == id_perm for e in json.loads(b)["envios"])
+    except Exception:
+        voltou = False
+    check("B: item restaurado aparece na lista normal", voltou, f"{st} {b[:80]}")
+    
+    # 7. Apaga novamente (admin) para poder purgar
+    st, b = raw("DELETE", f"/api/envios/{id_perm}", None, AH)
+    # 8. Admin PURGA - DEVE FUNCIONAR
+    st, b = raw("DELETE", f"/api/envios/{id_perm}/purga", None, AH)
+    check("B: admin PODE purgar", st == 200 and json.loads(b).get("message") == "Envio removido permanentemente", f"{st} {b[:80]}")
+    
+    # 9. Verifica que sumiu de tudo
+    st, b = raw("GET", "/api/envios?q=" + quote("Teste Permissao"), None, AH)
+    try:
+        sumiu = not any(e["_id"] == id_perm for e in json.loads(b)["envios"])
+    except Exception:
+        sumiu = False
+    check("B: item purgado sumiu da lista", sumiu, f"{st} {b[:80]}")
+
+else:
+    check("B: setup permissões lixeira (login users)", False, "falhou criar item ou login users")
+
 # eventos de envio inexistente -> lista vazia (nao 500)
 st, b = raw("GET", "/api/envios/999999999/eventos", None, AH)
 try:
