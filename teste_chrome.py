@@ -69,6 +69,23 @@ try:
     cards = driver.find_elements(By.CSS_SELECTOR, "#lista .item")
     check(f"4 cadastrados via Chrome (lista={len(cards)})", len(cards) >= n0 + 4, f"antes={n0} depois={len(cards)}")
 
+    # ERRO VISIVEL: cadastro invalido precisa mostrar o problema (nao falhar em silencio)
+    n_antes = len(driver.find_elements(By.CSS_SELECTOR, "#lista .item"))
+    driver.find_element(By.ID, "f-nome").clear()
+    driver.find_element(By.ID, "f-nome").send_keys("Invalido Teste")
+    elc = driver.find_element(By.ID, "f-codigo")
+    elc.clear(); elc.send_keys("XYZ")   # formato errado (nao e LLNNNNNNNNNBR)
+    driver.find_element(By.ID, "btn-add").click()
+    time.sleep(1)
+    toast_txt = driver.find_element(By.ID, "toast-msg").text
+    toast_cls = driver.find_element(By.ID, "toast").get_attribute("class") or ""
+    check("erro visivel no cadastro invalido", "show" in toast_cls and ("inválido" in toast_txt or "Código" in toast_txt), toast_txt[:80])
+    n_dep = len(driver.find_elements(By.CSS_SELECTOR, "#lista .item"))
+    check("cadastro invalido nao cria item", n_dep == n_antes, f"{n_antes}->{n_dep}")
+    driver.find_element(By.ID, "f-nome").clear()
+    driver.find_element(By.ID, "f-codigo").clear()
+    time.sleep(2)
+
     # busca
     b = driver.find_element(By.ID, "f-busca")
     b.clear(); b.send_keys("Teste Bruno")

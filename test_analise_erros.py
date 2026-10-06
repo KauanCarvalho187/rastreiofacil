@@ -122,6 +122,12 @@ check("v22: cards de stats filtram a lista (clique)",
       ".stat[data-filtro]" in js and "c.dataset.filtro" in js)
 check("v22: export CSV/XLSX usa o recorte filtrado", js.count("const lista = filtrados();") >= 2)
 check("v22: JS baixa backup com token", "'/backup'" in js and "baixarBackup" in js)
+# verificacao profunda / autorreparo (regressoes — nao remover)
+check("delete de envio limpa o historico (eventos) — sem orfaos",
+      "DELETE FROM eventos WHERE envio_id" in main)
+check("botoes de salvar travam durante a requisicao (loading anti duplo clique)",
+      "btnAdd.disabled = true" in js and "btnAdd.disabled = false" in js
+      and "btnEd.disabled = true" in js and "btnEd2.disabled = false" in js)
 print("RESULTADO:", "TUDO OK" if ok else "HA FALHAS")
 sys.exit(0 if ok else 1)
 

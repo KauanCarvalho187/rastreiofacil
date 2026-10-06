@@ -394,6 +394,8 @@ async function salvarEdicao(){
     return;
   }
   try{
+    const btnEd = $('btn-ed-salvar');
+    if(btnEd) btnEd.disabled = true; /* trava durante o PUT: duplo clique não reenvia */
     await api('/envios/'+ctx.id, {method:'PUT', body:JSON.stringify(body)});
     $('modal-edit').hidden = true;
     toast('Envio atualizado!');
@@ -405,6 +407,9 @@ async function salvarEdicao(){
          o status virava 'pendente' e a cópia era descartada na sincronização.) */
       mostraErro('Sem servidor — não deu para salvar a edição agora. Confira se o backend está no ar (iniciar-sistema.bat) e clique em Salvar de novo.');
     } else mostraErro(e.message);
+  }finally{
+    const btnEd2 = $('btn-ed-salvar');
+    if(btnEd2) btnEd2.disabled = false;
   }
 }
 /* modal do WhatsApp: mostra a mensagem, copia para a área de transferência e abre o chat */
@@ -449,6 +454,8 @@ document.getElementById('btn-add').onclick = async ()=>{
     toast('Sem servidor — salvo no navegador. Sincroniza sozinho quando o backend ligar.');
   };
   if(state.online !== true){ salvarLocal(); return; } /* online só quando o checkDB confirmou; undefined/false = offline: grava direto, sem tentar a rede */
+  const btnAdd = $('btn-add');
+  if(btnAdd) btnAdd.disabled = true; /* trava durante o POST: duplo clique não cria registro duplicado */
   try{
     const r = await api('/envios',{method:'POST',body:JSON.stringify({destinatario:nome,codigo,email,celular:fone,descricao:desc,status})});
     $('f-nome').value=''; $('f-codigo').value=''; $('f-email').value=''; $('f-fone').value=''; $('f-desc').value='';
@@ -457,6 +464,8 @@ document.getElementById('btn-add').onclick = async ()=>{
     await load();
   }catch(err){
     if(isNetError(err)){ salvarLocal(); } else { toast(err.message); }
+  }finally{
+    if(btnAdd) btnAdd.disabled = false;
   }
 };
 

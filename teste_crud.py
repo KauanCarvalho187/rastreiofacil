@@ -76,7 +76,16 @@ check("R: lista geral ve os criados", st == 200 and "CR111111111BR" in cods and 
 check("R: total coerente", d.get("total", 0) >= 4, str(d.get("total")))
 
 st, d = api("GET", "/api/envios?q=Lote", None, tok)
-check("R: busca q filtra", st == 200 and len(d.get("envios", [])) == 2 and all("Lote" in e["destinatario"] for e in d["envios"]), str([e['destinatario'] for e in d.get('envios', [])]))
+# Correcao do teste (comportamento do backend esta correto): a busca casa em
+# destinatario + codigo + descricao (case-insensitive), entao tambem encontra os
+# cadastros QZ cuja descricao contem "lote". O check valida a SEMANTICA real:
+# todos os hits tem "lote" em algum campo e "Lote A"/"Lote B" estao entre eles.
+_hits = d.get("envios", [])
+_campos = [(e["destinatario"] + " " + e["codigo"] + " " + e["descricao"]).lower() for e in _hits]
+check("R: busca q filtra", st == 200
+      and "Lote A" in [e["destinatario"] for e in _hits]
+      and "Lote B" in [e["destinatario"] for e in _hits]
+      and all("lote" in c for c in _campos), f"{len(_hits)} hits")
 
 st, d = api("GET", "/api/envios?status=entregue&limit=500", None, tok)
 check("R: filtro status", st == 200 and all(e["status"] == "entregue" for e in d.get("envios", [])), "")

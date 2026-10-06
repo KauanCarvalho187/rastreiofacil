@@ -418,6 +418,9 @@ async def deletar_envio(envio_id: int, usuario: dict = Depends(auth_opcional)):
     n,_ = await execute("DELETE FROM envios WHERE id=?", (envio_id,))
     if n == 0:
         raise HTTPException(404, "Envio nao encontrado")
+    # integridade: o schema nao tem FK/cascade — sem isto o historico do envio
+    # ficaria orfao para sempre (bug: teste_bordas "DELETE limpa historico")
+    await execute("DELETE FROM eventos WHERE envio_id=?", (envio_id,))
     return {"message": "Envio removido"}
 
 def _montar_email(destino, assunto, html):
