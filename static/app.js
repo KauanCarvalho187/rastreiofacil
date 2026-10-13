@@ -23,7 +23,7 @@ function _esperaBackoff(){
 function _backendVoltou(){ _tentativasOff = 0; _semBackendDesde = 0; }
 const $ = id => document.getElementById(id);
 const state = { envios: [], db: {}, token: localStorage.getItem('rf_token')||'' };
-const APP_V = '24'; /* versão do front: se o servidor tiver outra, a página se recarrega sozinha */
+const APP_V = '25'; /* versão do front: se o servidor tiver outra, a página se recarrega sozinha */
 window.APP_V = APP_V; /* facilita conferir a versão no console: window.APP_V */
 /* ===== erros visíveis: nada de falhar em silêncio =====
    Se qualquer coisa quebrar, o problema aparece na barra vermelha do rodapé
@@ -298,6 +298,21 @@ async function load(){
           pagina++;
         }
       }catch(e){ remotos = []; }
+      /* correcao v25: admin carrega tambem a lixeira. A listagem padrao da API
+         (sem "status") exclui status='excluido', entao antes o card "Lixeira" ficava
+         sempre vazio e os botoes "Restaurar"/"Apagar def." eram inalcancaveis. */
+      if(state.admin){
+        try{
+          let pagina = 1, lidos = 0;
+          for(;;){
+            const dl = await api('/envios?status=excluido&page='+pagina+'&limit=500');
+            const itens = dl.envios || [];
+            remotos = remotos.concat(itens); lidos += itens.length;
+            if(itens.length < 500 || lidos >= (dl.total||0)) break;
+            pagina++;
+          }
+        }catch(e){}
+      }
     }
   }
   state.envios = [...remotos, ...lerLocais()];
@@ -324,7 +339,9 @@ function filtrados(){
   const q = ($('f-busca').value || '').toLowerCase();
   const f = $('f-filtro').value;
   return state.envios.filter(e => {
-    const okF = f === 'todos' ? true : uiStatus(e) === f;
+    const s = uiStatus(e);
+    // "todos" mostra os ativos (a lixeira tem o proprio filtro/card)
+    const okF = f === 'todos' ? s !== 'excluido' : s === f;
     const okQ = !q || (e.destinatario + ' ' + e.codigo + ' ' + (e.descricao || '')).toLowerCase().includes(q);
     return okF && okQ;
   });
@@ -332,7 +349,7 @@ function filtrados(){
 function render(){
   const list = filtrados();
   const isAdmin = !!state.admin;
-  $('st-total').textContent = state.envios.length;
+  $('st-total').textContent = state.envios.filter(e=>uiStatus(e)!=='excluido').length;
   $('st-pend').textContent = state.envios.filter(e=>uiStatus(e)==='pendente').length;
   $('st-cam').textContent = state.envios.filter(e=>uiStatus(e)==='a_caminho').length;
   $('st-ent').textContent = state.envios.filter(e=>uiStatus(e)==='entregue').length;

@@ -4,7 +4,7 @@
 > Backend **FastAPI (Python)** + Frontend **HTML/CSS/JS vanilla** (sem build) +
 > Banco **SQLite** (local), **Postgres** (`DATABASE_URL`) ou **Cloudflare D1**.
 >
-> **Versão do front/back: `24`** (campo `APP_VERSAO` no `main.py` e `APP_V` no `static/app.js`).
+> **Versão do front/back: `25`** (campo `APP_VERSAO` no `main.py` e `APP_V` no `static/app.js`).
 > Documentação revisada em **13/10/2026**, conferida linha a linha contra
 > `main.py`, `db.py`, `validacao.py`, `rastreio.py`, `static/app.js`, `static/index.html`,
 > `cloudflare/worker.js` e os testes.
@@ -111,6 +111,8 @@ rastreio-asistema1_1/
 ├─ teste_bordas.py          # Casos adversariais (payloads, SQL injection, unicode)
 ├─ teste_canais.py          # E2E navegador dos 3 canais de notificação
 ├─ teste_chrome.py          # E2E navegador (CRUD na UI)
+├─ teste_operacional.py     # E2E da API: login, cadastro em lote, lixeira/purgar, Excel
+├─ teste_navegador_demo.py  # Demonstração no Chrome (Selenium visível) + prints em evidencias/
 │
 ├─ Dockerfile               # Imagem (usuário non-root + HEALTHCHECK)
 ├─ docker-compose.yml       # Compose (volume do SQLite; Postgres opcional)
@@ -177,8 +179,8 @@ compatibilidade com Live Server (`:5500`–`:5503`) e `file://`. **Em produção
 `CORS_ORIGINS=https://seu-dominio.com`.
 
 ### 5.3 Versionamento do front (anti "aba velha")
-O `app.js` guarda `APP_V = '24'` e pergunta `GET /api/versao`. Se o servidor responder outra
-versão, o front se recarrega sozinho. O `index.html` referencia os assets com `?v=24`.
+O `app.js` guarda `APP_V = '25'` e pergunta `GET /api/versao`. Se o servidor responder outra
+versão, o front se recarrega sozinho. O `index.html` referencia os assets com `?v=25`.
 **Ao publicar mudanças no front, suba a versão nos dois lugares** (`main.py` → `APP_VERSAO`
 e `static/app.js` → `APP_V`, além do `?v=` no `index.html` e no `cloudflare/worker.js`).
 
@@ -250,7 +252,7 @@ Erros do FastAPI vêm como `{"detail": "mensagem"}`.
 |---|---|---|
 | GET | `/api/health` | `{ok, db:{configured,connected,driver,url_safe}, smtp, rastreio}` |
 | GET | `/api/db-status` | Status detalhado do banco |
-| GET | `/api/versao` | `{versao}` (hoje `"24"`) |
+| GET | `/api/versao` | `{versao}` (hoje `"25"`) |
 | GET | `/api/auth/estado` | `{temUsuarios, admin}` (usa o token do header, se houver) |
 
 ### 8.2 Autenticação
@@ -503,9 +505,18 @@ e "arquivos mortos" que não podem voltar. Rode: `python test_analise_erros.py`.
 `teste_api_real.py`, `teste_crud.py`, `teste_bordas.py`, `teste_canais.py`, `teste_chrome.py`.
 Semeie `admin@empresa.com` / `admin12345`.
 
+Dois scripts sobem o servidor sozinhos (banco temporário) e não precisam de nada semeado:
+
+- `python teste_operacional.py` — E2E da API: health, bootstrap do admin, login (ok/401),
+  cadastro de 8 pessoas, duplicado, status, lixeira (excluir/restaurar/purgar), estatísticas e Excel.
+- `python teste_navegador_demo.py --pausa 20` — abre o **Chrome visível** e clica o fluxo de verdade
+  (login → cadastrar várias → mudar status → apagar → ver lixeira → **Exportar Excel**), salvando
+  prints de cada etapa em `evidencias/` e a planilha em `envios_teste.xlsx`.
+
 ### 14.4 CI
 `.github/workflows/ci.yml` roda em push/PR: `test_analise_erros.py`, `pytest`,
-`teste_fluxo.py` e `teste_rastreio.py` (Python 3.12). Os testes de navegador ficam de fora.
+`teste_fluxo.py` e `teste_rastreio.py` (Python 3.12), mais um job `navegador` que roda
+`pytest --browser` (Chrome headless) cobrindo login, cadastro e lixeira na interface.
 
 > **Dica Windows:** se aparecer `UnicodeEncodeError` nos scripts (por causa de `→`), rode com
 > `set PYTHONUTF8=1`.
@@ -521,6 +532,7 @@ Semeie `admin@empresa.com` / `admin12345`.
 | **v22** | Lixeira (soft delete) com restaurar/purgar (admin); **backup** do SQLite; `/auth/estado` informa admin; cards de estatística filtram a lista; export CSV/XLSX do recorte filtrado; histórico por envio. |
 | **v23** | **Rastreio automático** (API Wonca) com cache; modal de rastreio; **Cloudflare Worker + D1** espelhando o backend (`cloudflare/worker.js`, `cloudflare/schema.sql`). |
 | **v24** | Detecção de backend em várias portas do Live Server (5500–5503); **debounce** na busca; **cabeçalhos de segurança**; **índice único** de `codigo` + insert a prova de corrida; `restreiofacil/` ignorado; suíte **pytest** + **CI**; **Dockerfile** non-root com HEALTHCHECK; documentação reescrita. |
+| **v25** | Correção: o **card "Lixeira" mostrava sempre vazio** — o front não buscava os `status='excluido'` (a listagem padrão da API os exclui), deixando os botões **Restaurar/Apagar def.** inalcançáveis. Agora o admin carrega a lixeira e o filtro "Todos" não mistura excluídos. Testes de navegador passam a rodar (`pytest --browser`). |
 
 ---
 
@@ -528,7 +540,7 @@ Semeie `admin@empresa.com` / `admin12345`.
 
 | Sintoma | Causa provável / solução |
 |---|---|
-| HTML/JS antigo no navegador | Headers `no-store`/`?v=24` já cobrem; force recarga (Ctrl+F5). Confira `window.APP_V`. |
+| HTML/JS antigo no navegador | Headers `no-store`/`?v=25` já cobrem; force recarga (Ctrl+F5). Confira `window.APP_V`. |
 | Login não entra | Senha errada, usuário **inativo**, ou rate-limit (`429`) — espere a janela. |
 | `401` em rotas de dados | Token ausente/expirado ou sessão revogada; faça login de novo. |
 | `403` no restaurar/purgar/backup/usuarios | Recurso exclusivo de **admin**. |

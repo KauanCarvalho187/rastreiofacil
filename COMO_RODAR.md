@@ -23,7 +23,7 @@ Sem backend, cadastro e importação ficam salvos **no navegador** (`localStorag
 sozinhos quando o Python estiver instalado. Para parar, feche a janela *Rastreio-Facil-Servidor-Local*.
 
 > Erros de JavaScript aparecem numa **barra vermelha no rodapé**. A versão do front aparece no
-> console como `window.APP_V` e precisa bater com `APP_VERSAO` do `main.py` (hoje `24`).
+> console como `window.APP_V` e precisa bater com `APP_VERSAO` do `main.py` (hoje `25`).
 
 ---
 
@@ -136,6 +136,14 @@ Testes que abrem **navegador** (precisam de Chrome + selenium):
 pytest --browser
 ```
 
+Demonstração guiada no Chrome (abre a janela de verdade e faz tudo clicando, salvando prints):
+```bat
+python teste_navegador_demo.py --pausa 20
+```
+Ele sobe o servidor sozinho (banco temporário), faz login, cadastra várias pessoas, muda status,
+apaga algumas, mostra a **lixeira**, exporta o **Excel** (`envios_teste.xlsx`) e guarda os prints em
+`evidencias/`. Veja também `teste_operacional.py` (mesmo fluxo, via API).
+
 Os testes E2E já existentes (contra um servidor real em `127.0.0.1:3001`) continuam disponíveis:
 `teste_api_real.py`, `teste_crud.py`, `teste_bordas.py`, `teste_canais.py`, `teste_chrome.py`,
 `teste_fluxo.py`, `teste_rastreio.py`. Para rodá-los, suba o servidor com
@@ -147,7 +155,7 @@ Os testes E2E já existentes (contra um servidor real em `127.0.0.1:3001`) conti
 
 | Sintoma | O que fazer |
 |---|---|
-| Página com HTML/JS antigo | A versão (`?v=24`) e o header `no-store` resolvem; force recarga (Ctrl+F5). |
+| Página com HTML/JS antigo | A versão (`?v=25`) e o header `no-store` resolvem; force recarga (Ctrl+F5). |
 | `porta 3000 já em uso` | Feche a outra janela do servidor ou `Get-Process python \| Stop-Process -Force`. |
 | Erro ao mover a pasta do projeto | A `.venv` quebra de caminho; apague a `.venv` e recrie (`iniciar-sistema.bat` cobre o Python do sistema). |
 | E-mail não envia | Configure `SMTP_USER`/`SMTP_PASS` (Gmail precisa de *senha de app*). Sem SMTP, o app usa `mailto:`/wa.me. |

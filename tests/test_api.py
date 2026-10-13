@@ -30,7 +30,7 @@ def test_health(client):
 
 
 def test_versao(client):
-    assert client.get("/api/versao").json()["versao"] == "24"
+    assert client.get("/api/versao").json()["versao"] == "25"
 
 
 def test_db_status(client, auth):

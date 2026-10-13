@@ -5,7 +5,8 @@ name: CI
 #  - pytest                : suite em tests/ (API in-process + rastreio)
 #  - teste_fluxo.py        : E2E via ASGI (banco temporario)
 #  - teste_rastreio.py     : rastreio com provedor simulado (banco temporario)
-# Os testes de navegador (Selenium) ficam de fora — rode local com: pytest --browser
+# O job "navegador" roda os testes de Selenium (Chrome headless) do fluxo da interface.
+# Para rodar os testes de navegador localmente: pytest --browser
 
 on:
   push:
@@ -33,3 +34,18 @@ jobs:
         run: python teste_fluxo.py
       - name: Rastreio (provedor simulado)
         run: python teste_rastreio.py
+
+  navegador:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+      - name: Instalar dependencias
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements.txt -r requirements-dev.txt
+      - name: Testes de navegador (Chrome headless)
+        run: python -m pytest --browser -q

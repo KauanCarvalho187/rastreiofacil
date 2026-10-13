@@ -9,7 +9,7 @@ consulta automática de eventos.
 - Banco **SQLite** (local), **Postgres** (`DATABASE_URL`) ou **Cloudflare D1**
 - Roda também como **Cloudflare Worker** (`cloudflare/worker.js`, mesmas rotas `/api`)
 
-> Versão atual do front/back: **24**
+> Versão atual do front/back: **25**
 
 ## Recursos
 
@@ -41,9 +41,10 @@ pip install -r requirements.txt -r requirements-dev.txt
 pytest                      # suíte (API in-process + rastreio)
 python test_analise_erros.py  # verificador estático (inclui paridade main.py x worker.js)
 pytest --browser             # testes de navegador (Selenium + Chrome)
+python teste_navegador_demo.py --pausa 20   # demo no Chrome: login, cadastro, lixeira, Excel
 ```
 
-O CI (`.github/workflows/ci.yml`) roda pytest + verificador estático + E2E a cada push/PR.
+O CI (`.github/workflows/ci.yml`) roda pytest + verificador estático + E2E + navegador a cada push/PR.
 
 ## Documentação
 

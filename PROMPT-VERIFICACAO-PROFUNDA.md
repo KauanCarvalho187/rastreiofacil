@@ -11,7 +11,7 @@
 ## 0. Contexto do projeto (não pule)
 
 - **Stack**: Python 3.12 + FastAPI + SQLite (`database.db`; Postgres opcional via env) · front estático em `static/` (JS vanilla, sem build) · testes com `urllib` e Selenium.
-- **Servidor**: `python -m uvicorn main:app --port 3001` (health: `GET /api/health` → `{"versao":"22"}`).
+- **Servidor**: `python -m uvicorn main:app --port 3001` (health: `GET /api/health` → `{"versao":"25"}`).
 - **Arquivos principais**: `main.py` (rotas), `db.py` (acesso/diagrama), `validacao.py` (validações), `static/app.js`, `static/index.html`, `static/styles.css`.
 - **Suítes existentes** (todas devem estar verdes no fim):
 

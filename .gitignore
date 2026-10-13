@@ -15,6 +15,10 @@ smoke_test.db
 # copia aninhada do projeto (duplicata acidental — nao versionar)
 restreiofacil/
 
+# artefatos gerados por testes/demos (prints e planilha de exemplo)
+evidencias/
+envios_teste.xlsx
+
 # Cloudflare (wrangler)
 .wrangler/
 .dev.vars
