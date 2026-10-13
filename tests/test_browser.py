@@ -187,6 +187,13 @@ def test_cria_usuario_nao_admin_pelo_modal(browser, live_server, w):
     w.until(lambda d: d.find_element(By.ID, "btn-usuarios").is_displayed())
     _abrir_usuarios(browser, w)
 
+    # v27: o admin nao pode rebaixar a si mesmo pela tela (senao se tranca fora)
+    self_item = next((i for i in browser.find_elements(By.CSS_SELECTOR, "#us-lista .item")
+                      if EMAIL in i.text), None)
+    assert self_item is not None, "a propria linha do admin deveria aparecer na lista"
+    assert not self_item.find_elements(By.CSS_SELECTOR, "[data-us-admin]"), \
+        "a linha do proprio admin nao pode ter botao de alternar admin"
+
     nome, email, senha = "Comum Selenium", "comum@teste.com", "comum12345"
     w.until(EC.visibility_of_element_located((By.ID, "us-nome"))).send_keys(nome)
     browser.find_element(By.ID, "us-email").send_keys(email)

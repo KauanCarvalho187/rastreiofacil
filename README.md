@@ -9,7 +9,7 @@ consulta automática de eventos.
 - Banco **SQLite** (local), **Postgres** (`DATABASE_URL`) ou **Cloudflare D1**
 - Roda também como **Cloudflare Worker** (`cloudflare/worker.js`, mesmas rotas `/api`)
 
-> Versão atual do front/back: **26**
+> Versão atual do front/back: **27**
 
 ## Recursos
 

@@ -23,7 +23,7 @@ Sem backend, cadastro e importação ficam salvos **no navegador** (`localStorag
 sozinhos quando o Python estiver instalado. Para parar, feche a janela *Rastreio-Facil-Servidor-Local*.
 
 > Erros de JavaScript aparecem numa **barra vermelha no rodapé**. A versão do front aparece no
-> console como `window.APP_V` e precisa bater com `APP_VERSAO` do `main.py` (hoje `26`).
+> console como `window.APP_V` e precisa bater com `APP_VERSAO` do `main.py` (hoje `27`).
 
 ---
 
@@ -164,7 +164,7 @@ Os testes E2E já existentes (contra um servidor real em `127.0.0.1:3001`) conti
 
 | Sintoma | O que fazer |
 |---|---|
-| Página com HTML/JS antigo | A versão (`?v=26`) e o header `no-store` resolvem; force recarga (Ctrl+F5). |
+| Página com HTML/JS antigo | A versão (`?v=27`) e o header `no-store` resolvem; force recarga (Ctrl+F5). |
 | `porta 3000 já em uso` | Feche a outra janela do servidor ou `Get-Process python \| Stop-Process -Force`. |
 | Erro ao mover a pasta do projeto | A `.venv` quebra de caminho; apague a `.venv` e recrie (`iniciar-sistema.bat` cobre o Python do sistema). |
 | E-mail não envia | Configure `SMTP_USER`/`SMTP_PASS` (Gmail precisa de *senha de app*). Sem SMTP, o app usa `mailto:`/wa.me. |

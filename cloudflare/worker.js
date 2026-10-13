@@ -4,7 +4,7 @@
    Mudou uma regra no main.py / rastreio.py? Mude aqui tambem. */
 import { connect } from 'cloudflare:sockets';
 
-const APP_VERSAO = '26';
+const APP_VERSAO = '27';
 const RASTREIO_URL_PADRAO = 'https://api-labs.wonca.com.br/wonca.labs.v1.LabsService/Track';
 const REGEX_CODIGO = /^[A-Za-z]{2}\d{9}BR$/;
 const REGEX_EMAIL = /^[^@\s]+@[^@\s]+\.[^@\s]+$/;

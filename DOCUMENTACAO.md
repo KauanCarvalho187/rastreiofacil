@@ -4,7 +4,7 @@
 > Backend **FastAPI (Python)** + Frontend **HTML/CSS/JS vanilla** (sem build) +
 > Banco **SQLite** (local), **Postgres** (`DATABASE_URL`) ou **Cloudflare D1**.
 >
-> **Versão do front/back: `26`** (campo `APP_VERSAO` no `main.py` e `APP_V` no `static/app.js`).
+> **Versão do front/back: `27`** (campo `APP_VERSAO` no `main.py` e `APP_V` no `static/app.js`).
 > Documentação revisada em **13/10/2026**, conferida linha a linha contra
 > `main.py`, `db.py`, `validacao.py`, `rastreio.py`, `static/app.js`, `static/index.html`,
 > `cloudflare/worker.js` e os testes.
@@ -180,8 +180,8 @@ compatibilidade com Live Server (`:5500`–`:5503`) e `file://`. **Em produção
 `CORS_ORIGINS=https://seu-dominio.com`.
 
 ### 5.3 Versionamento do front (anti "aba velha")
-O `app.js` guarda `APP_V = '26'` e pergunta `GET /api/versao`. Se o servidor responder outra
-versão, o front se recarrega sozinho. O `index.html` referencia os assets com `?v=26`.
+O `app.js` guarda `APP_V = '27'` e pergunta `GET /api/versao`. Se o servidor responder outra
+versão, o front se recarrega sozinho. O `index.html` referencia os assets com `?v=27`.
 **Ao publicar mudanças no front, suba a versão nos dois lugares** (`main.py` → `APP_VERSAO`
 e `static/app.js` → `APP_V`, além do `?v=` no `index.html` e no `cloudflare/worker.js`).
 
@@ -253,7 +253,7 @@ Erros do FastAPI vêm como `{"detail": "mensagem"}`.
 |---|---|---|
 | GET | `/api/health` | `{ok, db:{configured,connected,driver,url_safe}, smtp, rastreio}` |
 | GET | `/api/db-status` | Status detalhado do banco |
-| GET | `/api/versao` | `{versao}` (hoje `"26"`) |
+| GET | `/api/versao` | `{versao}` (hoje `"27"`) |
 | GET | `/api/auth/estado` | `{temUsuarios, admin}` (usa o token do header, se houver) |
 
 ### 8.2 Autenticação
@@ -538,6 +538,7 @@ Dois scripts sobem o servidor sozinhos (banco temporário) e não precisam de na
 | **v24** | Detecção de backend em várias portas do Live Server (5500–5503); **debounce** na busca; **cabeçalhos de segurança**; **índice único** de `codigo` + insert a prova de corrida; `restreiofacil/` ignorado; suíte **pytest** + **CI**; **Dockerfile** non-root com HEALTHCHECK; documentação reescrita. |
 | **v25** | Correção: o **card "Lixeira" mostrava sempre vazio** — o front não buscava os `status='excluido'` (a listagem padrão da API os exclui), deixando os botões **Restaurar/Apagar def.** inalcançáveis. Agora o admin carrega a lixeira e o filtro "Todos" não mistura excluídos. Testes de navegador passam a rodar (`pytest --browser`). |
 | **v26** | **Gestão de usuários na interface** (antes só existia na API): botão 👥 no topo (só admin), com lista de usuários (badge admin/usuário, inativo) e formulário para **criar usuário não-admin** (nome, e-mail, senha ≥ 8) na própria tela; permite alternar admin/ativo. Correção de CSS: a regra global `[hidden]` faz o atributo vencer o `display` dos componentes — antes o **card "Lixeira" aparecia para não-admins** (`#stat-lix` com `.stat { display:flex }`). Teste de navegador novo (`test_cria_usuario_nao_admin_pelo_modal`). |
+| **v27** | **Blindagem (self-admin-guard)**: o chip "Remover admin" não fica ativo na **própria linha** do usuário logado — evita o admin se rebaixar sozinho e ficar sem nenhum administrador. Teste de navegador verifica que a linha do próprio admin não tem o botão de alternar admin. |
 
 ---
 
@@ -545,7 +546,7 @@ Dois scripts sobem o servidor sozinhos (banco temporário) e não precisam de na
 
 | Sintoma | Causa provável / solução |
 |---|---|
-| HTML/JS antigo no navegador | Headers `no-store`/`?v=26` já cobrem; force recarga (Ctrl+F5). Confira `window.APP_V`. |
+| HTML/JS antigo no navegador | Headers `no-store`/`?v=27` já cobrem; force recarga (Ctrl+F5). Confira `window.APP_V`. |
 | Login não entra | Senha errada, usuário **inativo**, ou rate-limit (`429`) — espere a janela. |
 | `401` em rotas de dados | Token ausente/expirado ou sessão revogada; faça login de novo. |
 | `403` no restaurar/purgar/backup/usuarios | Recurso exclusivo de **admin**. |

@@ -52,7 +52,7 @@ def main():
     st, d = req("GET", "/api/health")
     check("servidor no ar", st == 200 and d.get("ok") is True, f"st={st}")
     st, d = req("GET", "/api/versao")
-    check("versao 26", d.get("versao") == "26", str(d))
+    check("versao 27", d.get("versao") == "27", str(d))
 
     # 1. login admin
     st, d = req("POST", "/api/auth/login", {"email": "admin@empresa.com", "senha": "admin12345"})

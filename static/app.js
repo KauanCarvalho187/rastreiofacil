@@ -23,7 +23,7 @@ function _esperaBackoff(){
 function _backendVoltou(){ _tentativasOff = 0; _semBackendDesde = 0; }
 const $ = id => document.getElementById(id);
 const state = { envios: [], db: {}, token: localStorage.getItem('rf_token')||'' };
-const APP_V = '26'; /* versão do front: se o servidor tiver outra, a página se recarrega sozinha */
+const APP_V = '27'; /* versão do front: se o servidor tiver outra, a página se recarrega sozinha */
 window.APP_V = APP_V; /* facilita conferir a versão no console: window.APP_V */
 /* ===== erros visíveis: nada de falhar em silêncio =====
    Se qualquer coisa quebrar, o problema aparece na barra vermelha do rodapé
@@ -690,15 +690,17 @@ async function carregarUsuarios(){
     const us = d.usuarios || [];
     box.innerHTML = us.length ? us.map(u=>{
       const eu = state.usuarioId && String(u.id)===String(state.usuarioId);
+      /* v27: self-admin-guard — o admin não altera o próprio acesso pela tela (evita se trancar fora) */
+      const acoes = eu
+        ? '<button class="chip" disabled title="Você não pode alterar o seu próprio acesso">você</button>'
+        : '<button class="chip" data-us-admin="'+u.id+'" data-val="'+(u.admin?0:1)+'">'+(u.admin?'Remover admin':'Tornar admin')+'</button>'
+          +'<button class="chip '+(u.ativo?'danger':'success')+'" data-us-ativo="'+u.id+'" data-val="'+(u.ativo?0:1)+'">'+(u.ativo?'Desativar':'Reativar')+'</button>';
       return '<div class="item">'
         +'<div class="item-top"><b>'+esc(u.nome)+'</b>'
         +(u.admin ? '<span class="badge b-a_caminho">admin</span>' : '<span class="badge b-pendente">usuário</span>')
         +'</div>'
         +'<small>'+esc(u.email)+'</small>'
-        +'<div class="item-actions">'
-        +'<button class="chip" data-us-admin="'+u.id+'" data-val="'+(u.admin?0:1)+'">'+(u.admin?'Remover admin':'Tornar admin')+'</button>'
-        +(eu ? '<button class="chip" disabled>você</button>'
-             : '<button class="chip '+(u.ativo?'danger':'success')+'" data-us-ativo="'+u.id+'" data-val="'+(u.ativo?0:1)+'">'+(u.ativo?'Desativar':'Reativar')+'</button>')
+        +'<div class="item-actions">'+acoes
         +(u.ativo ? '' : ' <span class="badge badge--excluido">inativo</span>')
         +'</div></div>';
     }).join('') : '<div class="empty-inline">Nenhum usuário cadastrado.</div>';
