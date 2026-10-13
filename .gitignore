@@ -17,6 +17,7 @@ restreiofacil/
 
 # artefatos gerados por testes/demos (prints e planilha de exemplo)
 evidencias/
+evidencias_usuarios/
 envios_teste.xlsx
 
 # Cloudflare (wrangler)

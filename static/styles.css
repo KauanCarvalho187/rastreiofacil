@@ -105,6 +105,8 @@ body {
   background: var(--card);
   background: color-mix(in srgb, var(--warn) 10%, var(--card));
 }
+/* o atributo hidden precisa vencer o display dos componentes (ex.: .icon-btn usa inline-flex) */
+[hidden] { display: none !important; }
 .icon-btn {
   display: inline-flex;
   align-items: center;
@@ -498,6 +500,15 @@ body {
   color: #4ade80;
   border-color: #4ade80;
 }
+
+/* v26: gestao de usuarios (modal) */
+.us-lista { max-height: 240px; overflow: auto; margin-bottom: 10px; }
+.us-lista .item { padding: 10px 12px; margin-bottom: 8px; }
+.us-lista .item-actions { margin-top: 8px; }
+.modal-b h4 { margin: 12px 0 4px; font-size: 12px; text-transform: uppercase; letter-spacing: .04em; color: var(--mut); }
+.us-check { display: flex; flex-direction: row; align-items: center; gap: 8px; }
+.us-check input { width: auto; }
+.empty-inline { color: var(--mut); font-size: 13px; padding: 8px 2px; }
 
 .toast-action:hover {
   background: #1d4ed8 !important;

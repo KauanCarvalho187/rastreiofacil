@@ -100,14 +100,14 @@ check("lista: busca todas as paginas do servidor (nao trava em 200)",
 check("rota /api/notificacoes/massa definida uma unica vez (sem duplicata morta)",
       main.count('@app.post("/api/notificacoes/massa")') == 1)
 # melhorias v22 (regressoes — nao remover)
-check("v25: versao front/back em 25 (abas antigas recarregam)",
-      'APP_VERSAO = "25"' in main and "APP_V = '25'" in js and "?v=25" in html)
+check("v26: versao front/back em 26 (abas antigas recarregam)",
+      'APP_VERSAO = "26"' in main and "APP_V = '26'" in js and "?v=26" in html)
 check("v23: rastreio automatico — rota, cache e modal",
       '@app.post("/api/envios/{envio_id}/rastrear")' in main and "_cache_valido(cache)" in main
       and 'id="modal-rt"' in html and "+'/rastrear'" in js)
 worker = open(os.path.join(BASE, "cloudflare", "worker.js"), encoding="utf-8").read()
-check("v25: Worker da Cloudflare na mesma versao que o main.py",
-      "const APP_VERSAO = '25'" in worker)
+check("v26: Worker da Cloudflare na mesma versao que o main.py",
+      "const APP_VERSAO = '26'" in worker)
 # correcao v25: a lixeira era inalcancavel no front (a listagem padrao da API exclui
 # status='excluido'); agora o admin carrega a lixeira e "Todos" nao mistura excluidos.
 check("v25: admin carrega a lixeira e 'Todos' oculta excluidos",

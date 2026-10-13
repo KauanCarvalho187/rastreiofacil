@@ -16,6 +16,7 @@
   <div class="top-actions">
     <span class="pill" id="db-pill" title="Status do banco">⏳ banco…</span>
     <button class="icon-btn" id="btn-notifica-massa" title="Notificar todos pendentes por e-mail">📣</button>
+    <button class="icon-btn" id="btn-usuarios" title="Usuários (admin)" hidden>👥</button>
     <button class="icon-btn" id="btn-logout" title="Sair">⏻</button>
     <button class="icon-btn" id="btn-login" title="Login / admin">👤</button>
   </div>
@@ -121,7 +122,23 @@
     <div class="modal-f"><button class="btn-ghost" data-close>Fechar</button><button class="btn-light" id="btn-do-login">Entrar</button><button class="btn-ghost" id="btn-do-reg">Criar admin (1º uso)</button></div>
   </div>
 </div>
+<div class="modal-ov" id="modal-usuarios" hidden>
+  <div class="modal">
+    <div class="modal-h"><h3>👥 Usuários</h3><button class="x" data-close>✕</button></div>
+    <div class="modal-b">
+      <p class="hint">Apenas administradores. Crie contas de equipe e defina quem é admin.</p>
+      <div class="us-lista" id="us-lista"></div>
+      <h4>Criar usuário</h4>
+      <label>Nome<input id="us-nome" placeholder="Ex.: Maria Souza" autocomplete="off" maxlength="80"></label>
+      <label>E-mail<input id="us-email" type="email" placeholder="maria@empresa.com" autocomplete="off" maxlength="120"></label>
+      <label>Senha <span class="opt">(mínimo 8)</span><input id="us-senha" type="password" placeholder="••••••••" autocomplete="new-password"></label>
+      <label class="us-check"><input type="checkbox" id="us-admin"> Administrador (acesso total)</label>
+      <p class="err" id="us-msg" hidden></p>
+    </div>
+    <div class="modal-f"><button class="btn-ghost" data-close>Fechar</button><button class="btn-light" id="btn-us-criar">＋ Criar usuário</button></div>
+  </div>
+</div>
 <script src="/static/libs/xlsx.full.min.js"></script>
-<script src="/static/app.js?v=25"></script>
+<script src="/static/app.js?v=26"></script>
 </body>
 </html>

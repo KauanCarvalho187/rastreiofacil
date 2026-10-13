@@ -23,7 +23,7 @@ function _esperaBackoff(){
 function _backendVoltou(){ _tentativasOff = 0; _semBackendDesde = 0; }
 const $ = id => document.getElementById(id);
 const state = { envios: [], db: {}, token: localStorage.getItem('rf_token')||'' };
-const APP_V = '25'; /* versão do front: se o servidor tiver outra, a página se recarrega sozinha */
+const APP_V = '26'; /* versão do front: se o servidor tiver outra, a página se recarrega sozinha */
 window.APP_V = APP_V; /* facilita conferir a versão no console: window.APP_V */
 /* ===== erros visíveis: nada de falhar em silêncio =====
    Se qualquer coisa quebrar, o problema aparece na barra vermelha do rodapé
@@ -195,7 +195,7 @@ async function api(path, opt={}){
 /* sessão: abre o login automaticamente quando o servidor pede autenticação */
 function pedirLogin(msg){
   const sessaoExpirou = !!state.token;
-  if(sessaoExpirou){ state.token=''; localStorage.removeItem('rf_token'); }
+  if(sessaoExpirou){ state.token=''; state.usuarioId = null; localStorage.removeItem('rf_token'); }
   if(window._loginPedido) return;
   window._loginPedido = true;
   const box = $('modal-login'); if(box) box.hidden = false;
@@ -254,7 +254,7 @@ async function load(){
   try{
   await checkDB();
   let remotos = [];
-  if(!state.online){ $('btn-backup').hidden = true; }
+  if(!state.online){ $('btn-backup').hidden = true; _usAdminVisivel(false); }
   if(state.online){
     // se o sistema já tem admin e o navegador não está logado, pede login
     let temUsuarios = false;
@@ -263,6 +263,7 @@ async function load(){
       temUsuarios = !!est.temUsuarios;
       state.admin = !!est.admin;
       $('btn-backup').hidden = !state.admin; /* ação reservada a administradores */
+      _usAdminVisivel(state.admin); /* v26: gestão de usuários só para admin */
       if(temUsuarios && !state.token) pedirLogin('Sistema já configurado — entre com o e-mail/senha do admin para ver e cadastrar envios no banco de dados.');
     }catch(e){}
     // o banco só aceita requisições autenticadas depois que existe usuário cadastrado
@@ -621,6 +622,7 @@ document.getElementById('btn-do-login').onclick = async ()=>{
   try{
     const d = await api('/auth/login',{method:'POST',body:JSON.stringify({email,senha})});
     state.token = d.token; localStorage.setItem('rf_token', d.token);
+    state.usuarioId = (d.user && d.user.id) || null;
     window._loginPedido = false;
     $('modal-login').hidden = true; toast('Bem-vindo!');
     await load();
@@ -630,6 +632,7 @@ document.getElementById('btn-do-login').onclick = async ()=>{
 async function fazerLogout(){
   try{ if(state.token) await api('/auth/logout',{method:'POST',body:'{}'}); }catch(e){}
   state.token=''; localStorage.removeItem('rf_token');
+  state.usuarioId = null;
   toast('Sessão encerrada.');
   pedirLogin('Você saiu. Entre novamente para continuar.');
   await load();
@@ -676,6 +679,67 @@ async function baixarBackup(){
     toast('Backup baixado.');
   }catch(err){ toast('Backup falhou: ' + err.message); }
 }
+/* ===== v26: gestão de usuários na própria interface (antes só existia na API) ===== */
+function _usAdminVisivel(v){ const b=$('btn-usuarios'); if(b) b.hidden = !v; }
+async function carregarUsuarios(){
+  const box = $('us-lista'); if(!box) return;
+  const msg = $('us-msg'); if(msg) msg.hidden = true;
+  box.innerHTML = '<div class="empty-inline">Carregando…</div>';
+  try{
+    const d = await api('/usuarios');
+    const us = d.usuarios || [];
+    box.innerHTML = us.length ? us.map(u=>{
+      const eu = state.usuarioId && String(u.id)===String(state.usuarioId);
+      return '<div class="item">'
+        +'<div class="item-top"><b>'+esc(u.nome)+'</b>'
+        +(u.admin ? '<span class="badge b-a_caminho">admin</span>' : '<span class="badge b-pendente">usuário</span>')
+        +'</div>'
+        +'<small>'+esc(u.email)+'</small>'
+        +'<div class="item-actions">'
+        +'<button class="chip" data-us-admin="'+u.id+'" data-val="'+(u.admin?0:1)+'">'+(u.admin?'Remover admin':'Tornar admin')+'</button>'
+        +(eu ? '<button class="chip" disabled>você</button>'
+             : '<button class="chip '+(u.ativo?'danger':'success')+'" data-us-ativo="'+u.id+'" data-val="'+(u.ativo?0:1)+'">'+(u.ativo?'Desativar':'Reativar')+'</button>')
+        +(u.ativo ? '' : ' <span class="badge badge--excluido">inativo</span>')
+        +'</div></div>';
+    }).join('') : '<div class="empty-inline">Nenhum usuário cadastrado.</div>';
+  }catch(e){
+    box.innerHTML = '<div class="empty-inline">Não foi possível carregar: '+esc(e.message)+'</div>';
+  }
+}
+async function criarUsuario(){
+  const msg = $('us-msg');
+  const nome = $('us-nome').value.trim();
+  const email = $('us-email').value.trim();
+  const senha = $('us-senha').value;
+  const admin = $('us-admin').checked;
+  const erro = t=>{ if(msg){ msg.textContent=t; msg.hidden=false; } toast(t); };
+  if(!nome) return erro('Informe o nome.');
+  if(!email) return erro('Informe o e-mail.');
+  if(senha.length < 8) return erro('A senha precisa de ao menos 8 caracteres.');
+  const btn = $('btn-us-criar'); if(btn) btn.disabled = true;
+  try{
+    await api('/auth/registrar',{method:'POST',body:JSON.stringify({nome,email,senha,admin})});
+    toast(admin ? 'Administrador criado!' : 'Usuário criado!');
+    $('us-nome').value=''; $('us-email').value=''; $('us-senha').value=''; $('us-admin').checked=false;
+    if(msg) msg.hidden = true;
+    await carregarUsuarios();
+  }catch(e){ erro(e.message); }
+  finally{ if(btn) btn.disabled = false; }
+}
+async function usuarioAcao(ev){
+  const b = ev.target.closest('[data-us-admin],[data-us-ativo]'); if(!b) return;
+  const ehAdmin = b.hasAttribute('data-us-admin');
+  const id = ehAdmin ? b.getAttribute('data-us-admin') : b.getAttribute('data-us-ativo');
+  const val = b.getAttribute('data-val') === '1';
+  b.disabled = true;
+  try{
+    await api('/usuarios/'+id,{method:'PATCH',body:JSON.stringify(ehAdmin ? {admin:val} : {ativo:val})});
+    toast('Usuário atualizado.');
+    await carregarUsuarios();
+    await load(); /* recarrega estado (se o próprio admin mudou, o botão some/aparece) */
+  }catch(e){ toast('Erro: '+e.message); b.disabled = false; }
+}
+
 function boot(){
   /* file:// (arquivo aberto direto no navegador): nada do /static carrega sem servidor e a API é
      inalcançável — avisa uma vez em vez de fingir que está tudo certo */
@@ -694,6 +758,9 @@ function boot(){
   $('btn-login').onclick = ()=>{ $('modal-login').hidden = false; };
   const btnOut = $('btn-logout'); if(btnOut) btnOut.onclick = fazerLogout;
   const btnMassa = $('btn-notifica-massa'); if(btnMassa) btnMassa.onclick = notificarMassa;
+  const btnU = $('btn-usuarios'); if(btnU) btnU.onclick = ()=>{ $('modal-usuarios').hidden = false; carregarUsuarios(); };
+  const btnUC = $('btn-us-criar'); if(btnUC) btnUC.onclick = criarUsuario;
+  const usL = $('us-lista'); if(usL) usL.addEventListener('click', usuarioAcao);
   $('ed-codigo').addEventListener('input', e=>mascaraRastreio(e.target));
   $('ed-fone').addEventListener('input', e=>mascaraFone(e.target));
   $('ed-email').addEventListener('input', e=>mascaraEmail(e.target));
