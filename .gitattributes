@@ -1,0 +1,30 @@
+# Normaliza as quebras de linha: o repositorio guarda LF e o checkout usa o
+# formato certo do sistema. Evita o "ruido" de CRLF/LF entre Windows e CI (Linux).
+* text=auto
+
+# Scripts do Windows: precisam de CRLF na arvore de trabalho
+*.bat text eol=crlf
+*.cmd text eol=crlf
+*.ps1 text eol=crlf
+
+# Scripts de shell/Git: precisam de LF
+*.sh  text eol=lf
+
+# Binarios: nunca normalizar
+*.png   binary
+*.jpg   binary
+*.jpeg  binary
+*.gif   binary
+*.ico   binary
+*.webp  binary
+*.woff  binary
+*.woff2 binary
+*.ttf   binary
+*.eot   binary
+*.otf   binary
+*.xlsx  binary
+*.xls   binary
+*.pdf   binary
+*.zip   binary
+*.db    binary
+*.sqlite binary

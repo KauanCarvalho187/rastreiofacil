@@ -66,4 +66,4 @@ Dockerfile         imagem non-root com healthcheck
 
 ## Licença
 
-Uso pessoal/privado do autor.
+Uso pessoal/privado do autor — **todos os direitos reservados**. Veja [`LICENSE`](LICENSE).
