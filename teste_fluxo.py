@@ -60,7 +60,7 @@ async def main():
         r = await c.post("/api/auth/logout", headers=H)
         check("logout", r.status_code == 200, r.text)
         r = await c.get("/api/versao")
-        check("versao 22", r.json().get("versao") == "22", r.text)
+        check("versao 24", r.json().get("versao") == "24", r.text)
     print(f"E2E: {P} passou, {F} falhou")
     try:
         os.remove(os.path.join(BASE, "teste_e2e.db"))

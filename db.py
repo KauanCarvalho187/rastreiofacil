@@ -85,9 +85,17 @@ async def init_db():
                 status TEXT DEFAULT 'pendente', notificado INTEGER DEFAULT 0,
                 criado_em TIMESTAMP DEFAULT NOW(),
                 atualizado_em TIMESTAMP DEFAULT NOW(),
-                criado_por INTEGER DEFAULT NULL)""")
+                criado_por INTEGER DEFAULT NULL,
+                excluido_por INTEGER DEFAULT NULL,
+                excluido_em TIMESTAMP DEFAULT NULL,
+                status_anterior TEXT DEFAULT NULL)""")
             await con.execute("CREATE INDEX IF NOT EXISTS idx_envios_codigo ON envios(codigo)")
             await con.execute("CREATE INDEX IF NOT EXISTS idx_envios_status ON envios(status)")
+            # unicidade do codigo (defesa em profundidade: o app ja checa antes de inserir)
+            try:
+                await con.execute("CREATE UNIQUE INDEX IF NOT EXISTS idx_envios_codigo_unico ON envios(codigo)")
+            except Exception:
+                pass  # banco legado com codigos duplicados: mantem o indice simples acima
             await con.execute("""CREATE TABLE IF NOT EXISTS usuarios (
                 id SERIAL PRIMARY KEY, nome TEXT NOT NULL DEFAULT '',
                 email TEXT UNIQUE NOT NULL, senha_hash TEXT NOT NULL,
@@ -102,11 +110,22 @@ async def init_db():
                 por_usuario INTEGER DEFAULT NULL, detalhe TEXT DEFAULT '',
                 criado_em TIMESTAMP DEFAULT NOW())""")
             await con.execute("CREATE INDEX IF NOT EXISTS idx_eventos_envio ON eventos(envio_id)")
-            # migracao: garante coluna atualizado_em em bancos Postgres antigos
-            try:
-                await con.execute("ALTER TABLE envios ADD COLUMN IF NOT EXISTS atualizado_em TIMESTAMP DEFAULT NOW()")
-            except Exception:
-                pass
+            # cache do rastreio automatico (1 linha por envio; eventos = JSON em texto)
+            await con.execute("""CREATE TABLE IF NOT EXISTS rastreios (
+                id SERIAL PRIMARY KEY, envio_id INTEGER UNIQUE NOT NULL,
+                situacao TEXT DEFAULT '', carrier TEXT DEFAULT '',
+                eventos TEXT DEFAULT '[]', consultado_em TEXT DEFAULT '')""")
+            # migracao: garante colunas atualizado_em + lixeira (soft delete) em bancos Postgres antigos
+            for _ddl in (
+                "ALTER TABLE envios ADD COLUMN IF NOT EXISTS atualizado_em TIMESTAMP DEFAULT NOW()",
+                "ALTER TABLE envios ADD COLUMN IF NOT EXISTS excluido_por INTEGER DEFAULT NULL",
+                "ALTER TABLE envios ADD COLUMN IF NOT EXISTS excluido_em TIMESTAMP DEFAULT NULL",
+                "ALTER TABLE envios ADD COLUMN IF NOT EXISTS status_anterior TEXT DEFAULT NULL",
+            ):
+                try:
+                    await con.execute(_ddl)
+                except Exception:
+                    pass
     else:
         import aiosqlite
         async with aiosqlite.connect(DB_PATH) as db:
@@ -121,6 +140,11 @@ async def init_db():
                 criado_por INTEGER DEFAULT NULL)""")
             await db.execute("CREATE INDEX IF NOT EXISTS idx_envios_codigo ON envios(codigo)")
             await db.execute("CREATE INDEX IF NOT EXISTS idx_envios_status ON envios(status)")
+            # unicidade do codigo (defesa em profundidade: o app ja checa antes de inserir)
+            try:
+                await db.execute("CREATE UNIQUE INDEX IF NOT EXISTS idx_envios_codigo_unico ON envios(codigo)")
+            except Exception:
+                pass  # banco legado com codigos duplicados: mantem o indice simples acima
             await db.execute("""CREATE TABLE IF NOT EXISTS usuarios (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
                 nome TEXT NOT NULL DEFAULT '', email TEXT UNIQUE NOT NULL,
@@ -137,6 +161,12 @@ async def init_db():
                 detalhe TEXT DEFAULT '',
                 criado_em TEXT DEFAULT (datetime('now')))""")
             await db.execute("CREATE INDEX IF NOT EXISTS idx_eventos_envio ON eventos(envio_id)")
+            # cache do rastreio automatico (1 linha por envio; eventos = JSON em texto)
+            await db.execute("""CREATE TABLE IF NOT EXISTS rastreios (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                envio_id INTEGER UNIQUE NOT NULL, situacao TEXT DEFAULT '',
+                carrier TEXT DEFAULT '', eventos TEXT DEFAULT '[]',
+                consultado_em TEXT DEFAULT '')""")
             # migração leve: garante coluna atualizado_em em bancos antigos
             try:
                 cur = await db.execute("PRAGMA table_info(envios)")

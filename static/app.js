@@ -1,8 +1,11 @@
 /* Rastreio Facil — UI moderna dark */
 /* API: quando o backend serve a própria página usamos path relativo (qualquer host/porta);
-   se a página vier de outra origem (Live Server :5501, file://) falamos com o backend :3000.
-   NÃO trocar por '/api' fixo sem desativar o Live Server, senão os POSTs caem no Live Server (405). */
-const API = (location.protocol.startsWith('http') && location.port !== '5501')
+   se a página vier de outra origem (Live Server, file://) falamos com o backend :3000.
+   NÃO trocar por '/api' fixo sem desativar o Live Server, senão os POSTs caem no Live Server (405).
+   Usamos uma LISTA de portas do Live Server em vez de uma porta fixa: assim não quebra quando o
+   Live Server troca de porta (ex.: 5502 no .vscode/settings.json). */
+const _portasLiveServer = ['5500','5501','5502','5503'];
+const API = (location.protocol.startsWith('http') && !_portasLiveServer.includes(location.port))
   ? '/api' : 'http://localhost:3000/api';
 /* anti-spam de console: quando o backend esta fora do ar, o navegador loga
    ERR_CONNECTION_REFUSED sozinho (nao da para suprimir via JS), entao reduzimos
@@ -20,7 +23,7 @@ function _esperaBackoff(){
 function _backendVoltou(){ _tentativasOff = 0; _semBackendDesde = 0; }
 const $ = id => document.getElementById(id);
 const state = { envios: [], db: {}, token: localStorage.getItem('rf_token')||'' };
-const APP_V = '22'; /* versão do front: se o servidor tiver outra, a página se recarrega sozinha */
+const APP_V = '24'; /* versão do front: se o servidor tiver outra, a página se recarrega sozinha */
 window.APP_V = APP_V; /* facilita conferir a versão no console: window.APP_V */
 /* ===== erros visíveis: nada de falhar em silêncio =====
    Se qualquer coisa quebrar, o problema aparece na barra vermelha do rodapé
@@ -185,7 +188,7 @@ async function api(path, opt={}){
   if(r.status===401 && path!=='/auth/login' && path!=='/auth/estado'){ pedirLogin(); }
   if(!r.ok){
     const det = d.erros ? ' — '+d.erros.slice(0,3).join('; ') : '';
-    throw new Error((d.message || ('Erro '+r.status)) + det);
+    throw new Error((d.message || (typeof d.detail === 'string' && d.detail) || ('Erro '+r.status)) + det);
   }
   return d;
 }
@@ -208,16 +211,17 @@ async function checkDB(){
     if(acabouDeVoltar) checarVersao(); /* confere a versão do front na hora, sem esperar os 15s do intervalo */
     state.db = d;
     const pill = $('db-pill');
+    const nomeDb = d.driver === 'd1' ? 'Cloudflare D1' : 'Postgres';
     if(!d.configured){
       pill.textContent = 'banco local (sem Postgres)'; pill.className = 'pill ok';
     } else if(!d.connected){
-      pill.textContent = 'Postgres com erro'; pill.className = 'pill bad';
+      pill.textContent = nomeDb+' com erro'; pill.className = 'pill bad';
       /* o detalhe muda a cada falha: avisa uma vez por mensagem nova (sem spammar a cada retry) */
       const detalhe = d.error || 'verifique a URL.';
       const chave = 'pg:' + detalhe;
-      if(state.ultimoAvisoDb !== chave){ state.ultimoAvisoDb = chave; toast('Postgres com erro (' + detalhe + ')'); }
+      if(state.ultimoAvisoDb !== chave){ state.ultimoAvisoDb = chave; toast(nomeDb+' com erro (' + detalhe + ')'); }
     } else {
-      pill.textContent = 'Postgres conectado'; pill.className = 'pill ok';
+      pill.textContent = nomeDb+' conectado'; pill.className = 'pill ok';
     }
   }catch(e){
     const estavaOffline = (state.online === false);
@@ -414,7 +418,11 @@ document.getElementById('lista').addEventListener('click', async ev=>{
       if(local){ atualizarLocal(it=>{ it.status = act; it.notificado = act==='pendente' ? 0 : 1; }); toast('Status atualizado (local).'); }
       else { await api('/envios/'+id+'/status',{method:'PATCH',body:JSON.stringify({status:act})}); toast('Status atualizado.'); }
     }
-    else if(act==='track'){ window.open(e.link||linkRastreio(e.codigo),'_blank'); return; }
+    else if(act==='track'){
+      /* sem backend (envio local/offline) não há como consultar a API: abre o site dos Correios */
+      if(local || !state.online){ window.open(e.link||linkRastreio(e.codigo),'_blank'); return; }
+      abrirRastreio(id, e); return;
+    }
     else if(act==='wa'){
       const fone = (e.celular||'').replace(/\D/g,'');
       if(!fone){ toast('Sem WhatsApp cadastrado.'); return; }
@@ -437,6 +445,41 @@ document.getElementById('lista').addEventListener('click', async ev=>{
     await load();
   }catch(err){ toast(err.message); }
 });
+/* modal de rastreio: eventos vindos da API (POST /envios/{id}/rastrear, com cache no servidor) */
+function dataHoraBR(s){
+  const m = String(s||'').match(/^(\d{4})-(\d{2})-(\d{2})(?:[ T](\d{2}:\d{2}))?/);
+  return m ? m[3]+'/'+m[2]+'/'+m[1]+(m[4] ? ' '+m[4] : '') : String(s||'');
+}
+function abrirRastreio(id, e){
+  window._rtCtx = { id: id, link: e.link||linkRastreio(e.codigo) };
+  $('rt-codigo').textContent = e.codigo;
+  $('modal-rt').hidden = false;
+  consultarRastreio(false);
+}
+async function consultarRastreio(forcar){
+  const ctx = window._rtCtx; if(!ctx) return;
+  const info = $('rt-info'), err = $('rt-err'), lista = $('rt-lista'), btn = $('btn-rt-atualizar');
+  info.textContent = 'Consultando…'; err.hidden = true; lista.innerHTML = '';
+  btn.disabled = true;
+  try{
+    const d = await api('/envios/'+ctx.id+'/rastrear',{method:'POST',body:JSON.stringify({forcar:!!forcar})});
+    if(window._rtCtx !== ctx) return; /* trocou de envio enquanto consultava */
+    const evs = d.eventos || [];
+    lista.className = 'rt-lista' + (d.situacao==='entregue' ? ' entregue' : '');
+    lista.innerHTML = evs.map(ev=>'<li><b>'+esc(ev.descricao)+'</b>'
+      +(ev.detalhe ? '<small>'+esc(ev.detalhe)+'</small>' : '')
+      +'<small>'+esc([dataHoraBR(ev.data), ev.local, ev.destino ? '→ '+ev.destino : ''].filter(Boolean).join(' • '))+'</small></li>').join('');
+    info.textContent = (evs.length ? evs.length+' evento(s)' : 'Nenhum evento registrado ainda para este código.')
+      + (d.consultado_em ? ' — consultado em '+dataHoraBR(d.consultado_em)+' UTC' : '')
+      + (d.cache ? ' (em cache)' : '');
+    if(d.aviso){ err.textContent = d.aviso; err.hidden = false; }
+    if(d.status_atualizado){ toast('Objeto entregue — status atualizado para "entregue".'); load(); }
+  }catch(ex){
+    if(window._rtCtx !== ctx) return;
+    info.textContent = 'Não foi possível consultar agora. Você pode acompanhar pelo site dos Correios.';
+    err.textContent = ex.message; err.hidden = false;
+  }finally{ btn.disabled = false; }
+}
 /* modal de edição: corrige nome, código, WhatsApp, e-mail e observações (com ou sem backend) */
 function abrirEdicao(id, e, local){
   window._editCtx = { id: id, local: local };
@@ -625,7 +668,11 @@ function boot(){
   $('f-codigo').addEventListener('input', e=>mascaraRastreio(e.target));
   $('f-fone').addEventListener('input', e=>mascaraFone(e.target));
   $('f-email').addEventListener('input', e=>mascaraEmail(e.target));
-  $('f-busca').addEventListener('input', render);
+  $('f-busca').addEventListener('input', ()=>{
+    /* debounce: evita re-render a cada tecla em listas grandes (só renderiza 150ms depois de parar) */
+    clearTimeout(window._buscaT);
+    window._buscaT = setTimeout(render, 150);
+  });
   $('f-filtro').addEventListener('change', render);
   $('btn-login').onclick = ()=>{ $('modal-login').hidden = false; };
   const btnOut = $('btn-logout'); if(btnOut) btnOut.onclick = fazerLogout;
@@ -634,6 +681,8 @@ function boot(){
   $('ed-fone').addEventListener('input', e=>mascaraFone(e.target));
   $('ed-email').addEventListener('input', e=>mascaraEmail(e.target));
   document.getElementById('btn-ed-salvar').onclick = salvarEdicao;
+  $('btn-rt-atualizar').onclick = ()=>consultarRastreio(true);
+  $('btn-rt-site').onclick = ()=>{ if(window._rtCtx) window.open(window._rtCtx.link,'_blank'); };
   document.querySelectorAll('[data-close]').forEach(b=>b.onclick=()=>{ const ov = b.closest('.modal-ov'); if(ov) ov.hidden = true; });
   document.getElementById('drop').onclick = ()=>document.getElementById('f-file').click();
   document.getElementById('f-file').onchange = e=>{ if(e.target.files[0]) lerArquivo(e.target.files[0]); e.target.value=''; };
@@ -642,50 +691,6 @@ function boot(){
   dd.addEventListener('dragleave', ()=>dd.classList.remove('over'));
   dd.addEventListener('drop', e=>{ e.preventDefault(); dd.classList.remove('over'); if(e.dataTransfer.files[0]) lerArquivo(e.dataTransfer.files[0]); });
   document.getElementById('btn-import-txt').onclick = ()=>{ const t=$('f-csv').value.trim(); if(!t){ toast('Cole os dados primeiro.'); return; } importarLinhas(parseCsvLinhas(t)); $('f-csv').value=''; };
-  document.getElementById('btn-force-local').onclick = ()=>{
-    // rota de fuga: pega o que está na tela (state) + arquivo/textarea e grava TUDO no localStorage,
-    // sem validar, sem rede, sem depender de state.online. Para quando "nada funciona".
-    try{
-      const base = lerLocais();
-      const vistos = new Set(base.map(o=>String(o.codigo||'').toUpperCase()));
-      let novos = 0;
-      state.envios.forEach(e=>{
-        const cod = String(e.codigo||'').toUpperCase();
-        if(cod && !vistos.has(cod)){
-          vistos.add(cod);
-          base.push({_id:e._id!=null?e._id:idLocal()-Math.floor(Math.random()*100000), _local:true,
-            destinatario:e.destinatario||'', codigo:e.codigo||'', email:e.email||'', celular:e.celular||'',
-            descricao:e.descricao||'', status:(e.status||'pendente'), notificado:(e.status||'pendente')==='pendente'?0:1,
-            criado_em:e.criado_em||agoraLocal(), link:e.link||linkRastreio(e.codigo||'')});
-          novos++;
-        }
-      });
-      const t = $('f-csv').value.trim();
-      let deTxt = 0;
-      if(t){
-        parseCsvLinhas(t).forEach(L=>{
-          const cod = String(L[1]||L[0]||'').toUpperCase().replace(/[^A-Z0-9]/g,'');
-          if(/^[A-Z]{2}\d{9}BR$/.test(cod) && !vistos.has(cod)){
-            vistos.add(cod);
-            base.push({_id:idLocal()-Math.floor(Math.random()*100000), _local:true,
-              destinatario:L[0]||'', codigo:cod, email:L[3]||'', celular:L[2]||'',
-              descricao:L[4]||'', status:'pendente', notificado:0, criado_em:agoraLocal(), link:linkRastreio(cod)});
-            deTxt++;
-          }
-        });
-        $('f-csv').value='';
-      }
-      gravarLocais(base);
-      state.envios = [...state.envios.filter(e=>!e._local), ...base];
-      // garante que o state reflita o storage mesmo se algo acima falhou parcialmente
-      try{ state.envios = [...state.envios.filter(e=>!e._local), ...lerLocais()]; }catch(e2){}
-      render();
-      const total = lerLocais().length;
-      const m = $('import-msg');
-      if(m) m.textContent = 'Salvamento local forçado: '+novos+' da tela + '+deTxt+' do texto = '+total+' no navegador (F5 para conferir).';
-      toast('Forçado: '+total+' no navegador.');
-    }catch(e){ toast('Falha no salvamento forçado: '+e.message); }
-  };
   document.getElementById('btn-modelo').onclick = ()=>{
     const a=document.createElement('a');
     a.href=URL.createObjectURL(new Blob(["\ufeffNome,Codigo,Celular,Email,Descricao\nMaria Silva,AA123456789BR,(11) 91234-5678,maria@email.com,Pedido #1024\n",{type:'text/csv'}]));

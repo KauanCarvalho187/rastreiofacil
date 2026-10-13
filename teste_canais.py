@@ -66,6 +66,9 @@ try:
 
     # 1) RASTREAR
     achar_card().find_element(By.CSS_SELECTOR, '[data-act="track"]').click(); time.sleep(0.6)
+    check("Rastrear abre o modal de rastreio", driver.execute_script("return !document.getElementById('modal-rt').hidden"))
+    driver.find_element(By.ID, "btn-rt-site").click(); time.sleep(0.3)
+    driver.execute_script("document.getElementById('modal-rt').hidden = true")
     abertos = driver.execute_script("return window.__ab;")
     check("Rastrear abre link dos Correios",
           bool(abertos) and abertos[-1] == "https://rastreamento.correios.com.br/app/index.php?objeto=CT987654321BR",

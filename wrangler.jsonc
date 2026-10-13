@@ -1,0 +1,29 @@
+// Rastreio Facil na Cloudflare: Worker (cloudflare/worker.js) + banco D1 + pasta static/ como assets.
+// Deploy: npx wrangler deploy        Local: npx wrangler dev
+// Segredos (nao ficam neste arquivo): npx wrangler secret put RASTREIO_API_KEY | SMTP_USER | SMTP_PASS
+{
+  "name": "rastreio-facil",
+  "account_id": "bedd52c487614d8c9559c8bed64a0296",
+  "main": "cloudflare/worker.js",
+  "compatibility_date": "2026-09-01",
+  "assets": {
+    "directory": "./static",
+    "binding": "ASSETS",
+    // o Worker atende tudo: /api/* e ele mesmo; /static/* e repassado para os assets
+    "run_worker_first": true,
+    "html_handling": "none"
+  },
+  "d1_databases": [
+    { "binding": "DB", "database_name": "rastreio-facil", "database_id": "4af21218-9fe7-4d91-972f-ee66a1fbcee9" }
+  ],
+  "vars": {
+    "SMTP_HOST": "smtp.gmail.com",
+    "SMTP_PORT": "587",
+    "SENDER_NAME": "Sua Loja",
+    "SESSAO_DIAS": "7",
+    "LOGIN_MAX_TENT": "10",
+    "LOGIN_JANELA_SEG": "300",
+    "RASTREIO_CACHE_MIN": "30"
+  },
+  "observability": { "enabled": true }
+}

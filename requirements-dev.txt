@@ -1,0 +1,10 @@
+# Dependencias de DESENVOLVIMENTO / TESTES.
+# Nao sao necessarias para rodar o sistema (main.py / Cloudflare Worker).
+# Instale com: pip install -r requirements.txt -r requirements-dev.txt
+#
+# pytest/pytest-asyncio: suite em tests/ (rode: pytest)
+# selenium: testes de navegador (tests/test_browser.py, marcados 'browser')
+selenium==4.51.0
+webdriver-manager==4.1.2
+pytest==9.1.1
+pytest-asyncio==1.4.0

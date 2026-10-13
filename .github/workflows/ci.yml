@@ -1,0 +1,35 @@
+name: CI
+
+# Roda os testes que NAO precisam de rede:
+#  - test_analise_erros.py : verificacao estatica (regressoes de codigo/HTML/JS)
+#  - pytest                : suite em tests/ (API in-process + rastreio)
+#  - teste_fluxo.py        : E2E via ASGI (banco temporario)
+#  - teste_rastreio.py     : rastreio com provedor simulado (banco temporario)
+# Os testes de navegador (Selenium) ficam de fora — rode local com: pytest --browser
+
+on:
+  push:
+  pull_request:
+  workflow_dispatch:
+
+jobs:
+  testes:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+      - name: Instalar dependencias
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements.txt -r requirements-dev.txt
+      - name: Verificacao estatica
+        run: python test_analise_erros.py
+      - name: Suite pytest
+        run: python -m pytest
+      - name: Fluxo E2E (ASGI)
+        run: python teste_fluxo.py
+      - name: Rastreio (provedor simulado)
+        run: python teste_rastreio.py

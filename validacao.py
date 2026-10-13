@@ -1,6 +1,6 @@
 # -*- coding: utf-8 -*-
 """Validação unificada — usada por main.py e importar_planilha.py.
-Motivo: antes a mesma regra existia em 4 lugares (main.py, app.js, resgate.html,
+Motivo: antes a mesma regra existia em 3 lugares (main.py, app.js,
 importar_planilha.py) e divergia. Centralizar evita bug e facilita manutenção.
 """
 import re

@@ -8,3 +8,13 @@ node_modules/
 package-lock.json
 envios-backup.json
 *.zip
+*.db-journal
+teste_e2e.db
+smoke_test.db
+
+# copia aninhada do projeto (duplicata acidental — nao versionar)
+restreiofacil/
+
+# Cloudflare (wrangler)
+.wrangler/
+.dev.vars

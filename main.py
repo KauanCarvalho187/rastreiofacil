@@ -14,7 +14,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
 from typing import Optional
 from dotenv import load_dotenv
-import os, re, hashlib, secrets, time
+import os, re, hashlib, secrets, time, json
 from datetime import datetime, timedelta, timezone
 from html import escape as _html_escape
 import aiosmtplib
@@ -54,6 +54,10 @@ def _login_registrar_falha(ip: str):
 
 def _login_limpar(ip: str):
     _LOGIN_TENTATIVAS.pop(ip, None)
+
+import rastreio
+# minutos em que o resultado do rastreio fica em cache (a API tem cota mensal de consultas)
+RASTREIO_CACHE_MIN = int(os.getenv("RASTREIO_CACHE_MIN", "30"))
 
 from validacao import (
     REGEX_CODIGO as _REGEX_CODIGO, REGEX_EMAIL as _REGEX_EMAIL,
@@ -125,6 +129,11 @@ def verificar_senha(senha: str, armazenada: str) -> bool:
         return secrets.compare_digest(calc, h)
     except (ValueError, TypeError, AttributeError):
         return False
+
+def _e_duplicado(e: Exception) -> bool:
+    """Detecta violacao de unicidade tanto no SQLite (IntegrityError) quanto no Postgres (UniqueViolationError)."""
+    txt = f"{type(e).__name__} {e}".lower()
+    return "unique" in txt or "duplicat" in txt
 
 async def contar_usuarios() -> int:
     row = await fetch_one("SELECT COUNT(*) AS n FROM usuarios")
@@ -245,6 +254,11 @@ async def _cache(request: Request, call_next):
         resp.headers["Cache-Control"] = "public, max-age=31536000, immutable"
     elif p.endswith((".js",".css",".html",".json")):
         resp.headers["Cache-Control"] = "no-cache, must-revalidate"
+    # cabecalhos de seguranca basicos (defesa em profundidade; nao afeta o funcionamento do app)
+    resp.headers["X-Content-Type-Options"] = "nosniff"
+    resp.headers["X-Frame-Options"] = "SAMEORIGIN"
+    resp.headers["Referrer-Policy"] = "no-referrer"
+    resp.headers["Permissions-Policy"] = "geolocation=(), microphone=(), camera=()"
     return resp
 
 @app.get("/api/health")
@@ -260,7 +274,7 @@ async def health():
     st["connected"] = ok
     if err:
         st["error"] = err
-    return {"ok": ok, "db": st, "smtp": smtp_configurado()}
+    return {"ok": ok, "db": st, "smtp": smtp_configurado(), "rastreio": rastreio.configurado()}
 
 @app.get("/api/db-status")
 async def db_status():
@@ -344,9 +358,15 @@ async def criar_envios(payload: dict = Body(...), usuario: dict = Depends(auth_o
     for (nome, codigo, celular, email, desc, status) in norm:
         if await fetch_one("SELECT id FROM envios WHERE codigo = ?", (codigo,)):
             erros.append(f"{codigo}: já cadastrado (ignorado)"); continue
-        _, last = await execute(
-            "INSERT INTO envios (destinatario,codigo,celular,email,descricao,status,criado_por) VALUES (?,?,?,?,?,?,?)",
-            (nome, codigo, celular, email, desc, status, uid))
+        try:
+            _, last = await execute(
+                "INSERT INTO envios (destinatario,codigo,celular,email,descricao,status,criado_por) VALUES (?,?,?,?,?,?,?)",
+                (nome, codigo, celular, email, desc, status, uid))
+        except Exception as e:
+            # corrida entre o SELECT acima e o INSERT: o indice UNICO de codigo barra o duplicado
+            if _e_duplicado(e):
+                erros.append(f"{codigo}: já cadastrado (ignorado)"); continue
+            raise
         row = await fetch_one("SELECT * FROM envios WHERE id = ?", (last,))
         criados.append(_row_to_envio(row))
     msg = f"{len(criados)} envio(s) criado(s)"
@@ -381,7 +401,13 @@ async def atualizar_envio(envio_id: int, upd: EnvioUpdate, usuario: dict = Depen
     outro = await fetch_one("SELECT id FROM envios WHERE codigo = ? AND id <> ?", (novos[1], envio_id))
     if outro:
         raise HTTPException(409, f"Codigo {novos[1]} ja usado em outro envio")
-    await execute("UPDATE envios SET destinatario=?, codigo=?, celular=?, email=?, descricao=?, atualizado_em=? WHERE id=?", (*novos, _agora_iso(), envio_id))
+    try:
+        await execute("UPDATE envios SET destinatario=?, codigo=?, celular=?, email=?, descricao=?, atualizado_em=? WHERE id=?", (*novos, _agora_iso(), envio_id))
+    except Exception as e:
+        # corrida: o indice UNICO de codigo barra o duplicado mesmo se dois cliques passarem juntos
+        if _e_duplicado(e):
+            raise HTTPException(409, f"Codigo {novos[1]} ja usado em outro envio")
+        raise
     if upd.status:
         s = upd.status.lower()
         if s in ("pendente","a_caminho","entregue"):
@@ -467,7 +493,63 @@ async def purgar_envio(envio_id: int, usuario: dict = Depends(auth_usuario)):
     if n == 0:
         raise HTTPException(404, "Envio nao encontrado na lixeira")
     await execute("DELETE FROM eventos WHERE envio_id=?", (envio_id,))
+    await execute("DELETE FROM rastreios WHERE envio_id=?", (envio_id,))
     return {"message": "Envio removido permanentemente"}
+
+def _cache_valido(cache: dict) -> bool:
+    """Entregue nao muda mais (nao gasta cota); o resto vale RASTREIO_CACHE_MIN minutos."""
+    if cache.get("situacao") == "entregue":
+        return True
+    try:
+        quando = datetime.strptime(cache.get("consultado_em") or "", "%Y-%m-%d %H:%M:%S").replace(tzinfo=timezone.utc)
+    except ValueError:
+        return False
+    return datetime.now(timezone.utc) - quando < timedelta(minutes=RASTREIO_CACHE_MIN)
+
+def _rastreio_resposta(row: dict, cache: dict, em_cache: bool, aviso: str = "", status_atualizado: bool = False) -> dict:
+    try:
+        eventos = json.loads(cache.get("eventos") or "[]")
+    except ValueError:
+        eventos = []
+    return {
+        "codigo": row["codigo"], "status": row["status"],
+        "situacao": cache.get("situacao") or "sem_eventos",
+        "carrier": cache.get("carrier") or "", "eventos": eventos,
+        "consultado_em": cache.get("consultado_em") or "",
+        "cache": em_cache, "aviso": aviso, "status_atualizado": status_atualizado,
+        "link": gerar_link_rastreio(row["codigo"]),
+    }
+
+@app.post("/api/envios/{envio_id}/rastrear")
+async def rastrear_envio(envio_id: int, payload: dict = Body({}), usuario: dict = Depends(auth_opcional)):
+    """Consulta os eventos do objeto na API de rastreio (com cache) e marca 'entregue' sozinho."""
+    row = await fetch_one("SELECT * FROM envios WHERE id = ? AND status <> 'excluido'", (envio_id,))
+    if not row:
+        raise HTTPException(404, "Envio nao encontrado")
+    cache = await fetch_one("SELECT * FROM rastreios WHERE envio_id = ?", (envio_id,))
+    forcar = bool((payload or {}).get("forcar"))
+    if cache and not forcar and _cache_valido(cache):
+        return _rastreio_resposta(row, cache, True)
+    try:
+        res = await rastreio.consultar(row["codigo"])
+    except rastreio.RastreioErro as e:
+        if cache:  # provedor fora do ar: mostra a ultima consulta boa em vez de erro
+            return _rastreio_resposta(row, cache, True, aviso=str(e))
+        raise HTTPException(502 if rastreio.configurado() else 503, str(e))
+    novo = {"situacao": res["situacao"], "carrier": res["carrier"],
+            "eventos": json.dumps(res["eventos"], ensure_ascii=False), "consultado_em": _agora_iso()}
+    args = (novo["situacao"], novo["carrier"], novo["eventos"], novo["consultado_em"], envio_id)
+    n, _ = await execute("UPDATE rastreios SET situacao=?, carrier=?, eventos=?, consultado_em=? WHERE envio_id=?", args)
+    if n == 0:
+        await execute("INSERT INTO rastreios (situacao,carrier,eventos,consultado_em,envio_id) VALUES (?,?,?,?,?)", args)
+    # so avanca para "entregue": pendente/a_caminho continuam sob controle de quem notifica o cliente
+    atualizou = False
+    if res["situacao"] == "entregue" and row["status"] in ("pendente", "a_caminho"):
+        await execute("UPDATE envios SET status='entregue', notificado=1, atualizado_em=? WHERE id=?", (_agora_iso(), envio_id))
+        await registrar_evento(envio_id, row["status"], "entregue", usuario.get("id") or None, "rastreio automatico")
+        row = dict(row); row["status"] = "entregue"
+        atualizou = True
+    return _rastreio_resposta(row, novo, False, aviso=res["mensagem"], status_atualizado=atualizou)
 
 def _montar_email(destino, assunto, html):
     from email.header import Header
@@ -724,7 +806,7 @@ async def listar_envios(usuario: dict = Depends(auth_opcional),
 app.mount("/static", StaticFiles(directory="static"), name="static")
 
 # versao do front: o navegador compara e recarrega sozinho quando o servidor atualiza (evita aba velha travada)
-APP_VERSAO = "22"
+APP_VERSAO = "24"
 
 @app.get("/api/estatisticas")
 async def estatisticas(usuario: dict = Depends(auth_opcional)):

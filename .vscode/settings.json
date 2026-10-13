@@ -2,7 +2,7 @@
     "liveServer.settings.port": 5502,
     "python.terminal.activateEnvironment": false,
     "python.experiments.enabled": false,
-    "python.defaultInterpreterPath": "c:\\Users\\kauan\\Downloads\\rastreio-asistema1\\.venv\\Scripts\\python.exe",
+    "python.defaultInterpreterPath": "${workspaceFolder}/.venv/Scripts/python.exe",
     "python.analysis.extraPaths": ["."],
     "liveServer.settings.ignoreFiles": [
         "**/*.log",

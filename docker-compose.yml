@@ -6,6 +6,26 @@ services:
     env_file: .env
     environment:
       - PORT=3000
+      # Banco SQLite dentro do volume (nao use bind de arquivo: o Docker criaria uma pasta)
+      - DB_PATH=/data/database.db
     volumes:
-      - ./database.db:/app/database.db
+      - rastreio-data:/data
     restart: unless-stopped
+
+  # --- Opcional: Postgres local em vez do SQLite ---
+  # Descomente o servico abaixo e, no .env, aponte:
+  #   DATABASE_URL=postgresql://postgres:123@db:5432/rastreio?sslmode=disable
+  # e remova DB_PATH do bloco app.
+  #
+  # db:
+  #   image: postgres:16
+  #   environment:
+  #     - POSTGRES_PASSWORD=123
+  #     - POSTGRES_DB=rastreio
+  #   volumes:
+  #     - rastreio-pg:/var/lib/postgresql/data
+  #   restart: unless-stopped
+
+volumes:
+  rastreio-data:
+  # rastreio-pg:

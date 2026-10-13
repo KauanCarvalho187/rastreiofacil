@@ -56,9 +56,8 @@
         <p class="hint">Arraste um <b>.xlsx</b> / <b>.csv</b> ou clique para selecionar. Colunas: Nome | Código (AA123456789BR) | Celular | E-mail | Descrição (cabeçalho opcional).</p>
         <div class="drop" id="drop">📁 Arraste o arquivo aqui ou clique para selecionar<input type="file" id="f-file" accept=".csv,.xlsx,.xls" hidden></div>
         <textarea id="f-csv" rows="3" placeholder="Maria Silva,AA123456789BR,(11) 91234-5678,maria@email.com,Pedido #1024"></textarea>
-        <div class="import-actions"><button class="chip" id="btn-import-txt">Importar texto</button><button class="chip" id="btn-force-local">💾 Forçar salvamento local</button><button class="chip" id="btn-modelo">Baixar modelo CSV</button><button class="chip" id="btn-exp-csv">Exportar CSV</button><button class="chip" id="btn-exp-xlsx">Exportar Excel</button><button class="chip" id="btn-backup" hidden title="Baixa o banco completo (.db) — apenas administradores">💾 Backup do banco</button></div>
+        <div class="import-actions"><button class="chip" id="btn-import-txt">Importar texto</button><button class="chip" id="btn-modelo">Baixar modelo CSV</button><button class="chip" id="btn-exp-csv">Exportar CSV</button><button class="chip" id="btn-exp-xlsx">Exportar Excel</button><button class="chip" id="btn-backup" hidden title="Baixa o banco completo (.db) — apenas administradores">💾 Backup do banco</button></div>
         <p class="hint" id="import-msg"></p>
-        <p class="hint">Não funcionou? <a href="/static/resgate.html" target="_blank" style="color:#58a6ff">🛟 Abrir a página de resgate</a> — importa o CSV e grava direto no navegador, sem depender do sistema. Em caso de erro, aparece uma barra vermelha no rodapé desta tela.</p>
       </div>
     </div>
     <div class="list-col">
@@ -81,6 +80,17 @@
       <textarea id="wa-msg" rows="16" readonly style="width:100%;resize:vertical"></textarea>
     </div>
     <div class="modal-f"><button class="btn-ghost" data-close>Fechar</button><button class="btn-light" id="btn-wa-enviar">📋 Copiar e abrir WhatsApp</button></div>
+  </div>
+</div>
+<div class="modal-ov" id="modal-rt" hidden>
+  <div class="modal modal-rt">
+    <div class="modal-h"><h3>🚚 Rastreio <code id="rt-codigo"></code></h3><button class="x" data-close>✕</button></div>
+    <div class="modal-b">
+      <p class="hint" id="rt-info">Consultando…</p>
+      <p class="err" id="rt-err" hidden></p>
+      <ol class="rt-lista" id="rt-lista"></ol>
+    </div>
+    <div class="modal-f"><button class="btn-ghost" data-close>Fechar</button><button class="btn-ghost" id="btn-rt-site">🔗 Site dos Correios</button><button class="btn-light" id="btn-rt-atualizar">↻ Atualizar</button></div>
   </div>
 </div>
 <div class="modal-ov" id="modal-edit" hidden>
@@ -112,6 +122,6 @@
   </div>
 </div>
 <script src="/static/libs/xlsx.full.min.js"></script>
-<script src="/static/app.js?v=22"></script>
+<script src="/static/app.js?v=24"></script>
 </body>
 </html>

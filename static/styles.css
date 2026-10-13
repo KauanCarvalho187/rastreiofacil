@@ -608,6 +608,54 @@ body {
   resize: vertical;
 }
 
+.modal-rt {
+  max-width: 480px;
+}
+
+.modal-rt .modal-b {
+  max-height: 60vh;
+  overflow-y: auto;
+}
+
+.rt-lista {
+  list-style: none;
+  margin-top: 12px;
+  border-left: 2px solid var(--line);
+  padding-left: 14px;
+}
+
+.rt-lista li {
+  position: relative;
+  padding-bottom: 14px;
+  font-size: 13px;
+}
+
+.rt-lista li::before {
+  content: "";
+  position: absolute;
+  left: -20px;
+  top: 4px;
+  width: 10px;
+  height: 10px;
+  border-radius: 50%;
+  background: var(--line);
+}
+
+.rt-lista li:first-child::before {
+  background: var(--blue);
+}
+
+.rt-lista.entregue li:first-child::before {
+  background: var(--ok);
+}
+
+.rt-lista small {
+  display: block;
+  color: var(--mut);
+  font-size: 12px;
+  margin-top: 2px;
+}
+
 .modal-f {
   display: flex;
   gap: 8px;

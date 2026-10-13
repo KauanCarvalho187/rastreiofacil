@@ -84,19 +84,8 @@ check("import offline: leitura/escrita unica no localStorage (nao sobrescreve st
       "const porCodigo = new Map" in js and "gravarLocais(locais);" in js)
 check("import: le a coluna Status da planilha", "iS=5" in js and "st!=='pendente'" in js)
 check("erros de JS aparecem na tela (barra vermelha)", "erro-fatal" in js and "unhandledrejection" in js)
-check("pagina de resgate existe e e independente do app.js",
-      os.path.exists(os.path.join(BASE, "static", "resgate.html")))
-resg = open(os.path.join(BASE, "static", "resgate.html"), encoding="utf-8").read()
-check("resgate: nao carrega app.js (funciona sozinho)",
-      "src=\"/static/app.js\"" not in resg and "src='app.js'" not in resg
-      and "<script src" not in resg)
-check("resgate: tem Analisar / Salvar / Reler", all(x in resg for x in ("analisar()", "salvar()", "reler()")))
-check("resgate: aceita status com acento (A caminho)", "caminh" in resg)
-check("resgate: LimparCodigo completo (nao truncado)",
-      "else if(i>=2 && i<11 && /\\d/.test(c)) out+=c; }" in resg and "return out;\n}" in resg)
 check("CSV limpo na raiz (sem [object Object])",
       os.path.exists(os.path.join(BASE, "envios.csv")) and "[object Object]" not in open(os.path.join(BASE, "envios.csv"), encoding="utf-8").read())
-check("atalho de resgate existe", os.path.exists(os.path.join(BASE, "abrir-resgate.bat")))
 check("sem arquivo morto: Procfile/render.yaml/_validar_js.ps1 removidos",
       not any(os.path.exists(os.path.join(BASE, f)) for f in ("Procfile", "render.yaml", "_validar_js.ps1", "importar_envios_csv.sql")))
 # correcoes da auditoria v21 (regressoes — nao remover)
@@ -111,8 +100,35 @@ check("lista: busca todas as paginas do servidor (nao trava em 200)",
 check("rota /api/notificacoes/massa definida uma unica vez (sem duplicata morta)",
       main.count('@app.post("/api/notificacoes/massa")') == 1)
 # melhorias v22 (regressoes — nao remover)
-check("v22: versao front/back em 22 (abas antigas recarregam)",
-      'APP_VERSAO = "22"' in main and "APP_V = '22'" in js and "?v=22" in html)
+check("v24: versao front/back em 24 (abas antigas recarregam)",
+      'APP_VERSAO = "24"' in main and "APP_V = '24'" in js and "?v=24" in html)
+check("v23: rastreio automatico — rota, cache e modal",
+      '@app.post("/api/envios/{envio_id}/rastrear")' in main and "_cache_valido(cache)" in main
+      and 'id="modal-rt"' in html and "+'/rastrear'" in js)
+worker = open(os.path.join(BASE, "cloudflare", "worker.js"), encoding="utf-8").read()
+check("v24: Worker da Cloudflare na mesma versao que o main.py",
+      "const APP_VERSAO = '24'" in worker)
+
+# Paridade REAL de rotas: compara o conjunto (metodo, caminho) dos dois backends.
+# O Worker usa :param; o FastAPI usa {param} — normalizamos os dois para ":id",
+# assim qualquer rota que exista em um e nao no outro reprova o teste (anti-drift).
+import re as _re
+def _norm_rota(p):
+    p = _re.sub(r"\{[^}]+\}", ":id", p)      # FastAPI: {envio_id} / {uid}
+    p = _re.sub(r":[^/'\"]+", ":id", p)      # Worker:  :id
+    return p
+rotas_main = {(m.group(1).upper(), _norm_rota(m.group(2)))
+              for m in _re.finditer(r'@app\.(get|post|put|patch|delete)\("(/api/[^"]+)"', main)}
+rotas_worker = {(m.group(1), _norm_rota(m.group(2)))
+                for m in _re.finditer(r"rota\('(GET|POST|PUT|PATCH|DELETE)',\s*'(/api/[^']+)'", worker)}
+check("v24: Worker e main.py expoem as MESMAS rotas /api (metodo + caminho)",
+      rotas_main == rotas_worker)
+_diff_rotas = sorted(rotas_main ^ rotas_worker)
+if _diff_rotas:
+    print("     rotas divergentes (main vs worker):", _diff_rotas)
+check("v23: chave da API de rastreio so por env (nunca no codigo)",
+      'os.getenv("RASTREIO_API_KEY")' in open(os.path.join(BASE, "rastreio.py"), encoding="utf-8").read()
+      and "Apikey " not in js)
 check("v22: rota /api/backup existe e exige admin",
       '@app.get("/api/backup")' in main and 'if not usuario.get("admin")' in main)
 check("v22: /auth/estado informa se o token e de admin",
@@ -128,6 +144,16 @@ check("delete de envio limpa o historico (eventos) — sem orfaos",
 check("botoes de salvar travam durante a requisicao (loading anti duplo clique)",
       "btnAdd.disabled = true" in js and "btnAdd.disabled = false" in js
       and "btnEd.disabled = true" in js and "btnEd2.disabled = false" in js)
+# melhorias v24 (regressoes — nao remover)
+check("v24: Live Server aceita varias portas (nao quebra se mudar 5501->5502)",
+      "_portasLiveServer" in js and "5502" in js)
+check("v24: busca com debounce (nao re-renderiza a cada tecla)",
+      "window._buscaT" in js and "setTimeout(render, 150)" in js)
+check("v24: cabecalhos de seguranca na resposta",
+      "X-Content-Type-Options" in main and "X-Frame-Options" in main and "Permissions-Policy" in main)
+check("v24: codigo unico no banco (indice) + insert a prova de corrida",
+      "idx_envios_codigo_unico" in open(os.path.join(BASE, "db.py"), encoding="utf-8").read()
+      and "_e_duplicado" in main)
 print("RESULTADO:", "TUDO OK" if ok else "HA FALHAS")
 sys.exit(0 if ok else 1)
 

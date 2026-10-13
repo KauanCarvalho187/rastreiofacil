@@ -1,0 +1,15 @@
+# Arquivos que NAO precisam entrar na imagem Docker.
+.git
+.github
+.venv
+__pycache__/
+*.pyc
+*.log
+*.db
+*.db-journal
+.env
+.dev.vars
+.wrangler/
+node_modules/
+restreiofacil/
+*.zip
