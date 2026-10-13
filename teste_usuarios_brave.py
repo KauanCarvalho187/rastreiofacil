@@ -151,7 +151,21 @@ def main():
     ap.add_argument("--base", default="", help="usa um servidor ja rodando (ex.: http://127.0.0.1:3000)")
     ap.add_argument("--pausa", type=int, default=0, help="segundos com o navegador aberto no fim")
     ap.add_argument("--chrome", action="store_true", help="forca o Google Chrome em vez do Brave")
+    ap.add_argument("--login", default="", help="email:senha de um admin ja existente (pula a criacao do admin)")
+    ap.add_argument("--comum-nome", default="Operador Bravo", help="nome do usuario comum a criar")
+    ap.add_argument("--comum-email", default="", help="email do usuario comum (padrao: unico por execucao)")
     args = ap.parse_args()
+
+    if args.login and ":" not in args.login:
+        print("! --login deve ser no formato email:senha")
+        return 2
+    login = None
+    if args.login:
+        _em, _sn = args.login.split(":", 1)
+        login = {"email": _em.strip(), "senha": _sn}
+    comum = {"nome": args.comum_nome,
+             "email": args.comum_email or f"usuario.teste.{int(time.time())}@bravo.com",
+             "senha": "operador123"}
 
     os.makedirs(EVID, exist_ok=True)
     for f in glob.glob(os.path.join(EVID, "*.png")):
@@ -193,20 +207,30 @@ def main():
         check("pagina abriu", "Rastreio" in drv.title or "Rastreio" in drv.page_source)
         shot("tela_inicial")
 
-        # ---- 2. criar admin (1o uso) e entrar ------------------------------
-        print("\n== 2. Criar o admin (1o uso) e entrar ==")
-        _clicar(drv, drv.find_element(By.ID, "btn-login"))
-        wait.until(EC.visibility_of_element_located((By.ID, "l-email")))
-        _clicar(drv, drv.find_element(By.ID, "btn-do-reg"))  # revela o campo Nome
-        wait.until(EC.visibility_of_element_located((By.ID, "l-nome")))
-        drv.find_element(By.ID, "l-nome").send_keys(ADMIN["nome"])
-        _digitar(drv, "l-email", ADMIN["email"])
-        _digitar(drv, "l-senha", ADMIN["senha"])
-        shot("login_preenchido")
-        _clicar(drv, drv.find_element(By.ID, "btn-do-reg"))
+        # ---- 2. entrar como admin ------------------------------------------
+        if login:
+            print("\n== 2. Entrar como admin (login informado) ==")
+            if not drv.find_element(By.ID, "l-email").is_displayed():
+                _clicar(drv, drv.find_element(By.ID, "btn-login"))
+            wait.until(EC.visibility_of_element_located((By.ID, "l-email")))
+            _digitar(drv, "l-email", login["email"])
+            _digitar(drv, "l-senha", login["senha"])
+            shot("login_preenchido")
+            _clicar(drv, drv.find_element(By.ID, "btn-do-login"))
+        else:
+            print("\n== 2. Criar o admin (1o uso) e entrar ==")
+            _clicar(drv, drv.find_element(By.ID, "btn-login"))
+            wait.until(EC.visibility_of_element_located((By.ID, "l-email")))
+            _clicar(drv, drv.find_element(By.ID, "btn-do-reg"))  # revela o campo Nome
+            wait.until(EC.visibility_of_element_located((By.ID, "l-nome")))
+            drv.find_element(By.ID, "l-nome").send_keys(ADMIN["nome"])
+            _digitar(drv, "l-email", ADMIN["email"])
+            _digitar(drv, "l-senha", ADMIN["senha"])
+            shot("login_preenchido")
+            _clicar(drv, drv.find_element(By.ID, "btn-do-reg"))
         wait.until(EC.invisibility_of_element_located((By.ID, "l-email")))
         wait.until(lambda d: d.find_element(By.ID, "btn-usuarios").is_displayed())
-        check("admin criado, logado e botao Usuarios visivel", True)
+        check("admin logado e botao Usuarios visivel", True)
         shot("logado_admin")
 
         # ---- 3. abrir a tela de usuarios -----------------------------------
@@ -219,16 +243,16 @@ def main():
 
         # ---- 4. criar o usuario COMUM --------------------------------------
         print("\n== 4. Criar um usuario SEM ser admin ==")
-        drv.find_element(By.ID, "us-nome").send_keys(COMUM["nome"])
-        _digitar(drv, "us-email", COMUM["email"])
-        _digitar(drv, "us-senha", COMUM["senha"])
+        drv.find_element(By.ID, "us-nome").send_keys(comum["nome"])
+        _digitar(drv, "us-email", comum["email"])
+        _digitar(drv, "us-senha", comum["senha"])
         check("caixa 'Administrador' desmarcada", not drv.find_element(By.ID, "us-admin").is_selected())
         shot("form_preenchido")
         _clicar(drv, drv.find_element(By.ID, "btn-us-criar"))
 
-        wait.until(lambda d: COMUM["email"] in d.find_element(By.ID, "us-lista").text)
+        wait.until(lambda d: comum["email"] in d.find_element(By.ID, "us-lista").text)
         item = next((i for i in drv.find_elements(By.CSS_SELECTOR, "#us-lista .item")
-                     if COMUM["email"] in i.text), None)
+                     if comum["email"] in i.text), None)
         check("usuario comum aparece na lista", item is not None)
         check("selo 'usuario' (nao admin)", bool(item) and "usuário" in item.text,
               (item.text if item else "sem item"))
@@ -242,8 +266,8 @@ def main():
         out = drv.find_element(By.ID, "btn-logout")
         _clicar(drv, out)
         wait.until(EC.visibility_of_element_located((By.ID, "l-email")))
-        _digitar(drv, "l-email", COMUM["email"])
-        _digitar(drv, "l-senha", COMUM["senha"])
+        _digitar(drv, "l-email", comum["email"])
+        _digitar(drv, "l-senha", comum["senha"])
         _clicar(drv, drv.find_element(By.ID, "btn-do-login"))
         wait.until(EC.invisibility_of_element_located((By.ID, "l-email")))
         wait.until(lambda d: not d.find_element(By.ID, "btn-usuarios").is_displayed())
