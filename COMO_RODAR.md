@@ -1,7 +1,7 @@
 # Rastreio Fácil — Como rodar
 
 > Documentação técnica completa (arquitetura, API, banco, deploy): **`DOCUMENTACAO.md`**.
-> Versão do front/back: **24**.
+> Versão do front/back: **28**.
 
 Escolha o cenário:
 
@@ -13,6 +13,10 @@ Escolha o cenário:
 | [3. Cloudflare](#3-cloudflare-workers--d1) | Não | D1 (banco da Cloudflare) |
 | [4. Servidor/Render](#4-servidor-na-nuvem-render-railway-vps) | — | Postgres (`DATABASE_URL`) |
 
+> **Um login só:** o sistema tem uma única conta de acesso — **admin@admin.com**. Ela é criada
+> sozinha no primeiro boot do servidor (a senha inicial vem de `ADMIN_SENHA`, padrão `admin12345`).
+> Não existe tela nem API para criar outros usuários.
+
 ---
 
 ## 0. Só a interface (sem Python)
@@ -23,7 +27,10 @@ Sem backend, cadastro e importação ficam salvos **no navegador** (`localStorag
 sozinhos quando o Python estiver instalado. Para parar, feche a janela *Rastreio-Facil-Servidor-Local*.
 
 > Erros de JavaScript aparecem numa **barra vermelha no rodapé**. A versão do front aparece no
-> console como `window.APP_V` e precisa bater com `APP_VERSAO` do `main.py` (hoje `27`).
+> console como `window.APP_V` e precisa bater com `APP_VERSAO` do `main.py` (hoje `28`).
+
+> Sem backend (só a interface), a tela abre direto — mas, como o sistema tem um único admin,
+> o **modo local** grava no navegador e sincroniza com o servidor assim que ele subir.
 
 ---
 
@@ -51,9 +58,13 @@ uvicorn main:app --reload --port 3000
 ```
 
 ### Primeiro acesso (admin)
-No primeiro uso o banco está vazio: clique em **👤 → "Criar admin (1º uso)"** e informe nome,
-e-mail e senha (mínimo 8 caracteres). Esse primeiro usuário vira administrador; os próximos só
-podem ser criados por um admin logado.
+O banco já sobe com a conta **admin@admin.com** pronta (o servidor cria sozinho no boot, sem
+formulário de cadastro). Clique em **👤**, digite a senha e entre.
+
+- **Senha inicial:** `admin12345` (padrão). Para mudar, defina `ADMIN_SENHA` no `.env` **antes** do
+  primeiro boot ou troque a senha depois de entrar (o valor do `.env` só vale na criação).
+- **Conta antiga:** se o banco veio da versão multi-usuário, as contas extras são removidas no boot
+  e sobrou apenas o `admin@admin.com`.
 
 ### Banco de dados
 - **Padrão:** SQLite no arquivo `database.db` (pasta do projeto). Não precisa configurar nada.
@@ -103,9 +114,11 @@ wrangler d1 execute rastreio-facil --remote --file cloudflare/schema.sql
 wrangler secret put RASTREIO_API_KEY
 wrangler secret put SMTP_USER
 wrangler secret put SMTP_PASS
+wrangler secret put ADMIN_SENHA      # senha inicial do admin@admin.com
 # 4) publicar
 wrangler deploy
 ```
+O e-mail do admin fica em `ADMIN_EMAIL` no `wrangler.jsonc` (padrão `admin@admin.com`).
 Para testar localmente: `wrangler dev` (usa `cloudflare/schema.sql` via `--local` quando configurado).
 
 > ⚠️ Toda mudança de regra/rota no `main.py` **precisa ser espelhada no `cloudflare/worker.js`**.
@@ -118,7 +131,8 @@ Para testar localmente: `wrangler dev` (usa `cloudflare/schema.sql` via `--local
 1. Suba o repositório (GitHub) e crie um serviço Python.
 2. **Build:** `pip install -r requirements.txt`
 3. **Start:** `uvicorn main:app --host 0.0.0.0 --port $PORT`
-4. Variáveis: `DATABASE_URL` (Postgres), `SMTP_*`, `RASTREIO_API_KEY`, `CORS_ORIGINS`.
+4. Variáveis: `DATABASE_URL` (Postgres), `SMTP_*`, `RASTREIO_API_KEY`, `CORS_ORIGINS`,
+   `ADMIN_EMAIL` e `ADMIN_SENHA` (conta única de acesso).
 5. Docker também funciona: use a imagem deste repositório.
 
 ---
@@ -144,19 +158,9 @@ Ele sobe o servidor sozinho (banco temporário), faz login, cadastra várias pes
 apaga algumas, mostra a **lixeira**, exporta o **Excel** (`envios_teste.xlsx`) e guarda os prints em
 `evidencias/`. Veja também `teste_operacional.py` (mesmo fluxo, via API).
 
-Demonstração no **Brave** de criação de **usuário não-admin** pelo navegador:
-```bat
-python teste_usuarios_brave.py --pausa 20
-```
-Abre o Brave (ou `--chrome`), cria o admin (1º uso), abre a tela 👥 **Usuários**, cria um usuário
-**sem marcar "Administrador"** e depois entra com ele para mostrar que a gestão de usuários e o
-backup **não aparecem** para não-admins. Prints em `evidencias_usuarios/`.
-Para usar o servidor que já está rodando: `python teste_usuarios_brave.py --base http://127.0.0.1:3000`.
-
-Os testes E2E já existentes (contra um servidor real em `127.0.0.1:3001`) continuam disponíveis:
-`teste_api_real.py`, `teste_crud.py`, `teste_bordas.py`, `teste_canais.py`, `teste_chrome.py`,
-`teste_fluxo.py`, `teste_rastreio.py`. Para rodá-los, suba o servidor com
-`uvicorn main:app --port 3001` e um banco semeado (`admin@empresa.com` / `admin12345`).
+A suíte `pytest` cobre o mesmo caminho pela API (sem abrir navegador) e
+`test_analise_erros.py` confere as regras estáticas (rotas, HTML, JS e a paridade
+`main.py` × `cloudflare/worker.js`).
 
 ---
 
@@ -164,7 +168,7 @@ Os testes E2E já existentes (contra um servidor real em `127.0.0.1:3001`) conti
 
 | Sintoma | O que fazer |
 |---|---|
-| Página com HTML/JS antigo | A versão (`?v=27`) e o header `no-store` resolvem; force recarga (Ctrl+F5). |
+| Página com HTML/JS antigo | A versão (`?v=28`) e o header `no-store` resolvem; force recarga (Ctrl+F5). |
 | `porta 3000 já em uso` | Feche a outra janela do servidor ou `Get-Process python \| Stop-Process -Force`. |
 | Erro ao mover a pasta do projeto | A `.venv` quebra de caminho; apague a `.venv` e recrie (`iniciar-sistema.bat` cobre o Python do sistema). |
 | E-mail não envia | Configure `SMTP_USER`/`SMTP_PASS` (Gmail precisa de *senha de app*). Sem SMTP, o app usa `mailto:`/wa.me. |

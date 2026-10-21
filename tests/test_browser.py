@@ -21,7 +21,7 @@ from selenium.webdriver.support.ui import WebDriverWait  # noqa: E402
 
 pytestmark = pytest.mark.browser
 
-EMAIL = "admin@teste.com"
+EMAIL = "admin@admin.com"
 SENHA = "admin12345"
 
 
@@ -40,19 +40,24 @@ def _clique(browser, el):
 
 
 def _login(browser, live_server, w):
-    # quando o servidor ja tem admin, o proprio app abre o modal de login
-    # (pedirLogin) — so clicamos em "Entrar" se o modal ainda estiver fechado.
-    if not browser.find_element(By.ID, "l-email").is_displayed():
+    """v28: o sistema tem um unico admin — o modal so pede a senha."""
+    if not browser.find_element(By.ID, "l-senha").is_displayed():
         w.until(EC.element_to_be_clickable((By.ID, "btn-login"))).click()
-    w.until(EC.visibility_of_element_located((By.ID, "l-email"))).send_keys(EMAIL)
-    browser.find_element(By.ID, "l-senha").send_keys(SENHA)
+    w.until(EC.visibility_of_element_located((By.ID, "l-senha"))).send_keys(SENHA)
     _clique(browser, browser.find_element(By.ID, "btn-do-login"))
-    w.until(EC.invisibility_of_element_located((By.ID, "l-email")))
+    w.until(EC.invisibility_of_element_located((By.ID, "l-senha")))
 
 
 def test_pagina_abre(browser, live_server, w):
     assert "Rastreio" in browser.title
     assert browser.find_element(By.ID, "btn-login").is_displayed()
+
+
+def test_sem_tela_de_usuarios(browser, live_server, w):
+    """v28: a gestao de usuarios foi removida (admin unico)."""
+    assert not browser.find_elements(By.ID, "btn-usuarios")
+    assert not browser.find_elements(By.ID, "modal-usuarios")
+    assert not browser.find_elements(By.ID, "btn-do-reg")
 
 
 def test_login_e_logout(browser, live_server, w):
@@ -154,60 +159,3 @@ def test_lixeira_exclui_e_restaura(browser, live_server, w):
     # volta para "Todos" e confere que reapareceu entre os ativos
     assert _filtro(browser, "todos")
     w.until(lambda d: nome in d.find_element(By.ID, "lista").text)
-
-
-def _abrir_usuarios(browser, w):
-    btn = w.until(EC.element_to_be_clickable((By.ID, "btn-usuarios")))
-    try:
-        btn.click()
-    except Exception:
-        browser.execute_script("arguments[0].click();", btn)
-    w.until(EC.visibility_of_element_located((By.ID, "us-lista")))
-
-
-def _sair_e_entrar(browser, w, email, senha):
-    # fecha qualquer modal aberto (a tela de Usuarios fica sobreposta ao login)
-    browser.execute_script("document.querySelectorAll('.modal-ov').forEach(m=>{m.hidden=true;});")
-    botao = browser.find_element(By.ID, "btn-logout")
-    _clique(browser, botao)
-    campo = w.until(EC.visibility_of_element_located((By.ID, "l-email")))
-    campo.clear()
-    campo.send_keys(email)
-    senha_campo = browser.find_element(By.ID, "l-senha")
-    senha_campo.clear()
-    senha_campo.send_keys(senha)
-    _clique(browser, browser.find_element(By.ID, "btn-do-login"))
-    w.until(EC.invisibility_of_element_located((By.ID, "l-email")))
-
-
-def test_cria_usuario_nao_admin_pelo_modal(browser, live_server, w):
-    """v26: o admin cria um usuario COMUM pela tela de Usuarios (caixa 'admin' desmarcada)
-    e esse usuario, ao entrar, nao enxerga a gestao de usuarios."""
-    _login(browser, live_server, w)
-    w.until(lambda d: d.find_element(By.ID, "btn-usuarios").is_displayed())
-    _abrir_usuarios(browser, w)
-
-    # v27: o admin nao pode rebaixar a si mesmo pela tela (senao se tranca fora)
-    self_item = next((i for i in browser.find_elements(By.CSS_SELECTOR, "#us-lista .item")
-                      if EMAIL in i.text), None)
-    assert self_item is not None, "a propria linha do admin deveria aparecer na lista"
-    assert not self_item.find_elements(By.CSS_SELECTOR, "[data-us-admin]"), \
-        "a linha do proprio admin nao pode ter botao de alternar admin"
-
-    nome, email, senha = "Comum Selenium", "comum@teste.com", "comum12345"
-    w.until(EC.visibility_of_element_located((By.ID, "us-nome"))).send_keys(nome)
-    browser.find_element(By.ID, "us-email").send_keys(email)
-    browser.find_element(By.ID, "us-senha").send_keys(senha)
-    assert not browser.find_element(By.ID, "us-admin").is_selected()
-    browser.find_element(By.ID, "btn-us-criar").click()
-
-    # o novo usuario aparece na lista com o selo de usuario comum (nao admin)
-    w.until(lambda d: email in d.find_element(By.ID, "us-lista").text)
-    item = next((i for i in browser.find_elements(By.CSS_SELECTOR, "#us-lista .item")
-                 if email in i.text), None)
-    assert item is not None
-    assert "usuário" in item.text
-
-    # entra como o usuario comum: a gestao de usuarios some (nao e admin)
-    _sair_e_entrar(browser, w, email, senha)
-    w.until(lambda d: not d.find_element(By.ID, "btn-usuarios").is_displayed())

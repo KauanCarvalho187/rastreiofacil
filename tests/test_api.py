@@ -3,6 +3,9 @@
 
 Cobrem, em pytest, o comportamento antes verificado por teste_fluxo.py,
 teste_api_real.py, teste_crud.py e teste_bordas.py. Nao precisam de servidor.
+
+v28: o sistema tem UM admin so (admin@admin.com) — as rotas de gestao de
+usuarios (/api/usuarios) e de registro (/api/auth/registrar) nao existem mais.
 """
 
 
@@ -30,7 +33,7 @@ def test_health(client):
 
 
 def test_versao(client):
-    assert client.get("/api/versao").json()["versao"] == "27"
+    assert client.get("/api/versao").json()["versao"] == "28"
 
 
 def test_db_status(client, auth):
@@ -58,14 +61,16 @@ def test_index_serve_e_sem_cache(client):
 
 # --------------------------------------------------------------------- auth
 
-def test_estado_e_bootstrap(client, auth):
-    assert client.get("/api/auth/estado").json()["temUsuarios"] is True
-    assert client.get("/api/auth/estado", headers=auth["H"]).json()["admin"] is True
-    assert client.get("/api/auth/estado", headers=auth["Hjoao"]).json()["admin"] is False
+def test_estado_informa_admin_unico(client, auth):
+    d = client.get("/api/auth/estado").json()
+    assert d["email"] == "admin@admin.com"
+    assert d["admin"] is False
+    d = client.get("/api/auth/estado", headers=auth["H"]).json()
+    assert d["admin"] is True and d["email"] == "admin@admin.com"
 
 
 def test_login_errado_401(client, auth):
-    r = client.post("/api/auth/login", json={"email": "admin@t.com", "senha": "errada"})
+    r = client.post("/api/auth/login", json={"email": "admin@admin.com", "senha": "errada"})
     assert r.status_code == 401
 
 
@@ -73,34 +78,31 @@ def test_login_email_inexistente_401(client, auth):
     assert client.post("/api/auth/login", json={"email": "ninguem@t.com", "senha": "x1234567"}).status_code == 401
 
 
-def test_registrar_sem_admin_403(client, auth):
-    r = client.post("/api/auth/registrar",
-                    json={"nome": "X", "email": "x@t.com", "senha": "12345678"}, headers=auth["Hjoao"])
-    assert r.status_code == 403
+def test_somente_o_admin_entra(client, auth):
+    """v28: nao existe mais cadastro de usuarios — so o admin@admin.com entra."""
+    assert client.post("/api/auth/login",
+                       json={"email": "outro@t.com", "senha": "admin12345"}).status_code == 401
 
 
-def test_registrar_senha_curta_422(client, auth):
-    r = client.post("/api/auth/registrar",
-                    json={"nome": "X", "email": "x@t.com", "senha": "123"}, headers=auth["H"])
-    assert r.status_code == 422
-
-
-def test_registrar_email_duplicado_409(client, auth):
-    r = client.post("/api/auth/registrar",
-                    json={"nome": "Dup", "email": "admin@t.com", "senha": "12345678"}, headers=auth["H"])
-    assert r.status_code == 409
+def test_rotas_de_usuarios_nao_existem_mais(client, auth):
+    """v28: /api/usuarios e /api/auth/registrar foram removidas."""
+    assert client.get("/api/usuarios", headers=auth["H"]).status_code == 404
+    assert client.patch("/api/usuarios/1", json={"ativo": False}, headers=auth["H"]).status_code == 404
+    assert client.post("/api/auth/registrar",
+                       json={"nome": "X", "email": "x@t.com", "senha": "12345678"},
+                       headers=auth["H"]).status_code == 404
 
 
 def test_logout_revoga_sessao(client, auth):
     assert client.post("/api/auth/logout", headers=auth["H"]).status_code == 200
-    assert client.get("/api/usuarios", headers=auth["H"]).status_code == 401
+    assert client.get("/api/envios", headers=auth["H"]).status_code == 401
 
 
 def test_trocar_senha(client, auth):
     r = client.post("/api/auth/trocar-senha",
                     json={"senha_atual": "admin12345", "senha_nova": "novasenha1"}, headers=auth["H"])
     assert r.status_code == 200
-    assert client.post("/api/auth/login", json={"email": "admin@t.com", "senha": "novasenha1"}).status_code == 200
+    assert client.post("/api/auth/login", json={"email": "admin@admin.com", "senha": "novasenha1"}).status_code == 200
     r = client.post("/api/auth/trocar-senha",
                     json={"senha_atual": "errada", "senha_nova": "outrasenha1"}, headers=auth["H"])
     assert r.status_code == 401
@@ -110,26 +112,47 @@ def test_token_invalido_401(client, auth):
     assert client.get("/api/envios", headers={"Authorization": "Bearer nao_existe"}).status_code == 401
 
 
-# ----------------------------------------------------------------- usuarios
+# ------------------------------------------------------- admin unico (v28)
 
-def test_usuarios_exige_admin(client, auth):
-    assert client.get("/api/usuarios").status_code == 401
-    assert client.get("/api/usuarios", headers=auth["Hjoao"]).status_code == 403
-    d = client.get("/api/usuarios", headers=auth["H"]).json()
-    assert len(d["usuarios"]) == 2
+def _usuarios_no_banco():
+    """Le a tabela usuarios direto do SQLite temporario do teste."""
+    import asyncio
+    import aiosqlite
+    import db
+
+    async def _l():
+        async with aiosqlite.connect(db.DB_PATH) as c:
+            c.row_factory = aiosqlite.Row
+            cur = await c.execute("SELECT email, admin, ativo FROM usuarios")
+            return [dict(r) for r in await cur.fetchall()]
+
+    return asyncio.run(_l())
 
 
-def test_desativar_usuario_impede_login(client, auth):
-    uid = [u["id"] for u in client.get("/api/usuarios", headers=auth["H"]).json()["usuarios"]
-           if u["email"] == "joao@t.com"][0]
-    assert client.patch(f"/api/usuarios/{uid}", json={"ativo": False}, headers=auth["H"]).status_code == 200
-    assert client.post("/api/auth/login", json={"email": "joao@t.com", "senha": "joao12345"}).status_code == 401
+def test_admin_unico_criado_no_boot(client, auth):
+    """A conta admin@admin.com existe sozinha (sem usuario de equipe)."""
+    rows = _usuarios_no_banco()
+    assert len(rows) == 1
+    assert rows[0]["email"] == "admin@admin.com"
+    assert rows[0]["admin"] == 1 and rows[0]["ativo"] == 1
 
 
-def test_nao_desativar_a_si_mesmo(client, auth):
-    me = [u["id"] for u in client.get("/api/usuarios", headers=auth["H"]).json()["usuarios"]
-          if u["email"] == "admin@t.com"][0]
-    assert client.patch(f"/api/usuarios/{me}", json={"ativo": False}, headers=auth["H"]).status_code == 422
+def test_contas_antigas_sao_removidas(client, auth):
+    """v28: contas antigas (era multi-usuario) somem no boot."""
+    import asyncio
+    import aiosqlite
+    import db
+    import main
+
+    async def _insere():
+        async with aiosqlite.connect(db.DB_PATH) as c:
+            await c.execute("INSERT INTO usuarios (nome,email,senha_hash,admin,ativo) VALUES (?,?,?,0,1)",
+                            ("Antigo", "antigo@t.com", "x"))
+            await c.commit()
+
+    asyncio.run(_insere())
+    asyncio.run(main.garantir_admin())
+    assert [r["email"] for r in _usuarios_no_banco()] == ["admin@admin.com"]
 
 
 # --------------------------------------------------------------- envios CRUD
@@ -274,13 +297,12 @@ def test_lixeira_fluxo_completo(client, auth):
 
 
 def test_lixeira_permissoes(client, auth):
+    """v28: ha um unico usuario (o admin) — restaurar/purgar exigem token de admin."""
     eid = _criar(client, auth["H"], _cod(1)).json()["envios"][0]["_id"]
-    assert client.delete(f"/api/envios/{eid}", headers=auth["Hjoao"]).status_code == 200
-    assert client.post(f"/api/envios/{eid}/restaurar", headers=auth["Hjoao"]).status_code == 403
-    assert client.delete(f"/api/envios/{eid}/purga", headers=auth["Hjoao"]).status_code == 403
-    assert client.post(f"/api/envios/{eid}/restaurar", headers=auth["H"]).status_code == 200
+    assert client.post(f"/api/envios/{eid}/restaurar").status_code == 401
+    assert client.delete(f"/api/envios/{eid}/purga").status_code == 401
     client.delete(f"/api/envios/{eid}", headers=auth["H"])
-    assert client.delete(f"/api/envios/{eid}/purga", headers=auth["H"]).status_code == 200
+    assert client.post(f"/api/envios/{eid}/restaurar", headers=auth["H"]).status_code == 200
 
 
 def test_delete_inexistente_404(client, auth):
@@ -299,7 +321,6 @@ def test_estatisticas(client, auth):
 
 def test_backup_so_admin(client, auth):
     assert client.get("/api/backup").status_code == 401
-    assert client.get("/api/backup", headers=auth["Hjoao"]).status_code == 403
     r = client.get("/api/backup", headers=auth["H"])
     assert r.status_code == 200 and len(r.content) > 0
     assert "backup-rastreio" in r.headers.get("content-disposition", "")

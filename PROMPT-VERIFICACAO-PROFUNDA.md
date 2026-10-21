@@ -10,22 +10,22 @@
 
 ## 0. Contexto do projeto (não pule)
 
-- **Stack**: Python 3.12 + FastAPI + SQLite (`database.db`; Postgres opcional via env) · front estático em `static/` (JS vanilla, sem build) · testes com `urllib` e Selenium.
-- **Servidor**: `python -m uvicorn main:app --port 3001` (health: `GET /api/health` → `{"versao":"27"}`).
-- **Arquivos principais**: `main.py` (rotas), `db.py` (acesso/diagrama), `validacao.py` (validações), `static/app.js`, `static/index.html`, `static/styles.css`.
+- **Stack**: Python 3.12 + FastAPI + SQLite (`database.db`; Postgres opcional via env) · front estático em `static/` (JS vanilla, sem build) · testes com `pytest` e Selenium.
+- **Servidor**: `python -m uvicorn main:app --port 3001` (health: `GET /api/health`; versão: `GET /api/versao` → `{"versao":"28"}`).
+- **Arquivos principais**: `main.py` (rotas), `db.py` (acesso/diagrama), `validacao.py` (validações), `static/app.js`, `static/index.html`, `static/styles.css`, `cloudflare/worker.js` (espelho do backend).
+- **Acesso único (v28)**: existe **uma só conta** — `admin@admin.com` (senha inicial `admin12345`). Ela é criada sozinha no boot do servidor; contas antigas são apagadas. **Não existe** cadastro de usuários, nem `POST /api/auth/registrar`, nem `GET /api/usuarios`. O login no front pede **só a senha**.
 - **Suítes existentes** (todas devem estar verdes no fim):
 
   | Suíte | Comando | Esperado hoje |
   |---|---|---|
-  | análise estática/regressões | `python test_analise_erros.py` | `RESULTADO: TUDO OK` (73 checks) |
-  | fluxo E2E API | `python teste_fluxo.py` | `13 passou, 0 falhou` |
-  | API real (validações) | `python teste_api_real.py` | `23 passou, 0 falhou` |
-  | canais (Correios/WhatsApp/e-mail) | `python teste_canais.py` | `17 passou, 0 falhou` |
-  | CRUD exaustivo | `python teste_crud.py` | `30 passou, 0 falhou` |
-  | UI no navegador (Selenium/Chrome) | `python teste_chrome.py` | `10 passou, 0 falhou` |
+  | análise estática/regressões | `python test_analise_erros.py` | `RESULTADO: TUDO OK` (84 checks) |
+  | API in-process (pytest) | `pytest -q` | todos os testes verdes (browser é pulado sem `--browser`) |
+  | UI no navegador (Selenium/Chrome) | `pytest --browser` | todos os testes verdes (precisa de Chrome) |
+  | E2E da API | `python teste_operacional.py` | fluxo completo verde |
+  | E2E de UI (demo) | `python teste_navegador_demo.py --pausa 20` | fluxo completo + prints em `evidencias/` |
 
-- **Banco baseline**: 43 envios (**3 originais + 40 cadastrados `QZ100000001BR`…`QZ100000040BR`**) + 2 usuários (`admin@empresa.com` / `admin12345` e `op@empresa.com`). **Nunca apague os 40 QZ nem os 3 originais.** Resíduos de teste remova com `python limpar_teste.py` (apaga só `Teste %`/`Fulano %`/códigos de teste) e inspecione com `python inspecionar_db.py`.
-- **Ambiente Windows/PowerShell**: use `$env:PYTHONIOENCODING='utf-8'` antes de rodar Python no terminal.
+- **Banco baseline**: 43 envios (**3 originais + 40 cadastrados `QZ100000001BR`…`QZ100000040BR`**). **Nunca apague os 40 QZ nem os 3 originais.** A tabela `usuarios` tem **uma única linha** (o admin) — não semeie outras contas, pois o servidor as apaga no boot.
+- **Ambiente Windows/PowerShell**: use `$env:PYTHONUTF8=1` (ou `$env:PYTHONIOENCODING='utf-8'`) antes de rodar Python no terminal.
 - **Git**: `git status` limpo no início e no fim; commit por correção relevante com
   `git -c user.name='Rastreio Facil' -c user.email='rastreio@local' commit -m 'correcao: ...'`.
 
@@ -33,15 +33,16 @@
 
 ## 1. Etapa A — Verificação profunda (diagnóstico antes de mexer)
 
-1. **Ambiente**: servidor no ar (`/api/health`), `git status` limpo, baseline conferido (`inspecionar_db.py`).
-2. **Rode as 6 suítes** acima e anote cada falha com o nome exato do check.
+1. **Ambiente**: servidor no ar (`/api/health`), `git status` limpo, baseline conferido (43 envios; 1 usuário).
+2. **Rode as suítes** acima e anote cada falha com o nome exato do check.
 3. **Auditoria de código** (`main.py`, `db.py`, `validacao.py`, `app.js`):
    - Todas as rotas CRUD respondem 200/401/404/409/422 corretamente? Algum caminho pode devolver **500** com stack trace?
    - Existe validação de entrada em **toda** rota POST/PUT/PATCH (destinatário, código, e-mail, celular, status)?
-   - Auth: rotas privadas exigem token válido? token expirado/revogado → 401? admin-only (`/api/backup`, `/api/usuarios`) → 403 para não-admin?
+   - Auth: rotas privadas exigem token válido? token expirado/revogado → 401? admin-only (`/api/backup`, restaurar/purga) → 403 para não-admin? Nenhuma rota de dados aceita requisição **anônima**?
+   - Admin único: o boot cria/repara `admin@admin.com` e apaga contas extras? O front pede só a senha e mostra o e-mail fixo?
    - No front: toda chamada `fetch` trata erro (res.ok) e mostra mensagem amigável? Há `try/catch` nas operações de salvar/editar/excluir? A lista re-renderiza após CUD (sem F5)?
    - Estado offline (`lerLocais`) não perde dados ao voltar online (merge por código)?
-4. **E2E de UI** (Selenium, padrão do `teste_chrome.py`: login no `modal-login`, interceptar `window.open` para capturar links):
+4. **E2E de UI** (Selenium, padrão do `tests/test_browser.py`: login no `modal-login` com só a senha, interceptar `window.open` para capturar links):
    - Cadastrar válido → aparece na lista e nos cards; cadastrar inválido → **erro visível e nenhum registro corrompido**.
    - Editar (modal) → campos salvos e refletidos; status muda nos cards; excluir → some da lista e dos contadores.
    - Busca/filtro/export/import (CSV válido e malformado).
@@ -55,10 +56,10 @@ Para **cada erro** encontrado, siga este ciclo — nunca pule etapas:
 2. **Diagnosticar causa raiz**: leia o código envolvido até entender *por que* falha. Nunca adivinhe.
 3. **Corrigir no código-fonte** (backend ou front) — **proibido** "consertar" apenas o teste, desativar check, apagar asserção ou esconder a UI para o erro sumir. Se o *teste* estiver errado, só altere-o com justificativa explícita de qual comportamento estava errado e qual é o correto.
 4. **Aprender = teste de regressão permanente**: adicione um check novo que **falhava antes** e **passa depois**:
-   - erro de rota/validação → check novo em `teste_api_real.py` ou `teste_crud.py`;
+   - erro de rota/validação → check novo em `tests/test_api.py`;
    - erro de comportamento estático (rota existe, tratamento existe) → check em `test_analise_erros.py`;
-   - erro de UI → check novo em `teste_chrome.py`.
-5. **Provar**: rode a suíte do teste novo + **todas as 6 suítes**. Tudo verde obrigatório.
+   - erro de UI → check novo em `tests/test_browser.py`.
+5. **Provar**: rode a suíte do teste novo + **todas as suítes**. Tudo verde obrigatório.
 6. **Registrar**: commit `correcao: <o que> (<arquivo>)` e inclua a lição no relatório final (seção 4). Se a lição for transversal (ex.: "toda rota nova precisa de validação"), adicione um check estático permanente que a imponha.
 
 **Critério de "erro profissional"**: qualquer 500, mensagem crua ("Traceback...", "null", "undefined"), tela travada sem feedback, dado salvo sem validação, lista desatualizada após CUD ou perda de dados offline **conta como bug para este ciclo**.
@@ -81,7 +82,7 @@ Responda com:
 2. **Erros encontrados**: cada um com reprodução e causa raiz.
 3. **Correções**: arquivos alterados + commits.
 4. **Aprendizados**: testes de regressão novos (nome do check + suíte) e regras que passaram a valer.
-5. **Estado final**: resultados das 6 suítes, `git status` limpo, baseline do banco intacto.
+5. **Estado final**: resultados das suítes, `git status` limpo, baseline do banco intacto.
 
-**Regra máxima**: só declare "100% / sistema profissional" quando as 6 suítes estiverem
+**Regra máxima**: só declare "100% / sistema profissional" quando **todas as suítes** estiverem
 verdes **com os testes novos incluídos** e o E2E de UI passar de ponta a ponta.

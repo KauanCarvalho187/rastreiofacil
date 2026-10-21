@@ -23,7 +23,9 @@
     "SESSAO_DIAS": "7",
     "LOGIN_MAX_TENT": "10",
     "LOGIN_JANELA_SEG": "300",
-    "RASTREIO_CACHE_MIN": "30"
+    "RASTREIO_CACHE_MIN": "30",
+    "ADMIN_EMAIL": "admin@admin.com",
+    "ADMIN_NOME": "Admin"
   },
   "observability": { "enabled": true }
 }

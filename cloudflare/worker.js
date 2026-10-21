@@ -4,7 +4,7 @@
    Mudou uma regra no main.py / rastreio.py? Mude aqui tambem. */
 import { connect } from 'cloudflare:sockets';
 
-const APP_VERSAO = '27';
+const APP_VERSAO = '28';
 const RASTREIO_URL_PADRAO = 'https://api-labs.wonca.com.br/wonca.labs.v1.LabsService/Track';
 const REGEX_CODIGO = /^[A-Za-z]{2}\d{9}BR$/;
 const REGEX_EMAIL = /^[^@\s]+@[^@\s]+\.[^@\s]+$/;
@@ -81,7 +81,28 @@ async function verificarSenha(senha, armazenada){
 }
 
 /* ---------- autenticacao ---------- */
-const contarUsuarios = async env => Number((await fetchOne(env, 'SELECT COUNT(*) AS n FROM usuarios'))?.n || 0);
+/* v28: admin unico — uma conta so (ADMIN_EMAIL, padrao admin@admin.com). */
+const adminEmail = env => String(env.ADMIN_EMAIL || 'admin@admin.com').trim().toLowerCase();
+const adminNome = env => String(env.ADMIN_NOME || 'Admin').trim() || 'Admin';
+const adminSenha = env => String(env.ADMIN_SENHA || 'admin12345');
+async function garantirAdmin(env){
+  try {
+    const email = adminEmail(env);
+    const rows = await fetchAll(env, 'SELECT id, email, admin, ativo FROM usuarios');
+    const alvo = rows.find(u => String(u.email || '').toLowerCase() === email);
+    if (!alvo) {
+      await execute(env, 'INSERT INTO usuarios (nome,email,senha_hash,admin,ativo) VALUES (?,?,?,1,1)',
+        [adminNome(env), email, await hashSenha(adminSenha(env))]);
+    } else if (!alvo.admin || !alvo.ativo) {
+      await execute(env, 'UPDATE usuarios SET admin=1, ativo=1 WHERE id=?', [alvo.id]);
+    }
+    /* remove as demais contas (modo admin unico) e as sessoes delas */
+    if (rows.length > 1) {
+      await execute(env, 'DELETE FROM sessoes WHERE usuario_id <> (SELECT id FROM usuarios WHERE email=?)', [email]);
+      await execute(env, 'DELETE FROM usuarios WHERE email <> ?', [email]);
+    }
+  } catch (e) { /* banco ainda sem schema: segue sem admin automatico */ }
+}
 function bearer(req){
   const a = req.headers.get('Authorization') || '';
   return a.startsWith('Bearer ') ? a.slice(7).trim() : '';
@@ -94,10 +115,6 @@ async function authUsuario(env, req){
     + 'WHERE s.token = ? AND s.expira_em > ? AND u.ativo = 1', [token, agoraIso()]);
   if (!row) throw new Http(401, 'Sessao invalida ou expirada');
   return row;
-}
-async function authOpcional(env, req){
-  if (await contarUsuarios(env) === 0) return { id: 0, nome: 'setup', email: '', admin: true, bootstrap: true };
-  return authUsuario(env, req);
 }
 async function corpo(req){
   try { const d = await req.json(); return (d && typeof d === 'object') ? d : {}; }
@@ -346,16 +363,15 @@ rota('GET', '/api/db-status', async (env) => statusBanco(env));
 rota('GET', '/api/versao', async () => ({ versao: APP_VERSAO }));
 
 rota('GET', '/api/auth/estado', async (env, req) => {
-  const tem = await contarUsuarios(env) > 0;
   let admin = false;
-  if (tem && bearer(req)) {
+  if (bearer(req)) {
     try { admin = !!(await authUsuario(env, req)).admin; } catch (e) { admin = false; }
   }
-  return { temUsuarios: tem, admin };
+  return { admin, email: adminEmail(env) };
 });
 
 rota('POST', '/api/envios', async (env, req) => {
-  const usuario = await authOpcional(env, req);
+  const usuario = await authUsuario(env, req);
   const payload = await corpo(req);
   const m = 'envios' in payload ? payload.envios : null;
   const itens = m == null ? [payload] : (Array.isArray(m) ? m : [m]);
@@ -398,7 +414,7 @@ rota('POST', '/api/envios', async (env, req) => {
 });
 
 rota('GET', '/api/envios', async (env, req, _id, url) => {
-  const usuario = await authOpcional(env, req);
+  const usuario = await authUsuario(env, req);
   const q = url.searchParams.get('q') || '', status = url.searchParams.get('status') || '';
   const page = num(url.searchParams.get('page') ?? '1', NaN), limit = num(url.searchParams.get('limit') ?? '200', NaN);
   if (!(page >= 1) || !(limit >= 1 && limit <= 500)) throw new Http(422, 'page/limit invalidos');
@@ -425,7 +441,7 @@ rota('GET', '/api/envios', async (env, req, _id, url) => {
 });
 
 rota('PUT', '/api/envios/:id', async (env, req, id) => {
-  const usuario = await authOpcional(env, req);
+  const usuario = await authUsuario(env, req);
   const row = await fetchOne(env, 'SELECT * FROM envios WHERE id = ?', [id]);
   if (!row) throw new Http(404, 'Envio nao encontrado');
   const upd = await corpo(req);
@@ -453,7 +469,7 @@ rota('PUT', '/api/envios/:id', async (env, req, id) => {
 });
 
 rota('PATCH', '/api/envios/:id/status', async (env, req, id) => {
-  const usuario = await authOpcional(env, req);
+  const usuario = await authUsuario(env, req);
   const s = String((await corpo(req)).status || '').toLowerCase();
   if (!STATUS_ATIVOS.includes(s)) throw new Http(422, 'status deve ser pendente, a_caminho ou entregue');
   const anterior = await fetchOne(env, 'SELECT status FROM envios WHERE id = ?', [id]);
@@ -464,7 +480,7 @@ rota('PATCH', '/api/envios/:id/status', async (env, req, id) => {
 });
 
 rota('PATCH', '/api/envios/:id/notificado', async (env, req, id) => {
-  const usuario = await authOpcional(env, req);
+  const usuario = await authUsuario(env, req);
   const anterior = await fetchOne(env, 'SELECT status FROM envios WHERE id = ?', [id]);
   if (!anterior) throw new Http(404, 'Envio nao encontrado');
   /* nao regride status: so "pendente" avanca para "a_caminho" ao notificar */
@@ -476,7 +492,7 @@ rota('PATCH', '/api/envios/:id/notificado', async (env, req, id) => {
 
 rota('DELETE', '/api/envios/:id', async (env, req, id) => {
   /* soft delete: vai para a lixeira guardando quem excluiu e o status anterior */
-  const usuario = await authOpcional(env, req);
+  const usuario = await authUsuario(env, req);
   const row = await fetchOne(env, 'SELECT id, status FROM envios WHERE id=?', [id]);
   if (!row) throw new Http(404, 'Envio nao encontrado');
   await execute(env, "UPDATE envios SET status='excluido', excluido_por=?, excluido_em=?, status_anterior=? WHERE id=?",
@@ -507,7 +523,7 @@ rota('DELETE', '/api/envios/:id/purga', async (env, req, id) => {
 });
 
 rota('POST', '/api/envios/:id/rastrear', async (env, req, id) => {
-  const usuario = await authOpcional(env, req);
+  const usuario = await authUsuario(env, req);
   let row = await fetchOne(env, "SELECT * FROM envios WHERE id = ? AND status <> 'excluido'", [id]);
   if (!row) throw new Http(404, 'Envio nao encontrado');
   const cache = await fetchOne(env, 'SELECT * FROM rastreios WHERE envio_id = ?', [id]);
@@ -536,12 +552,12 @@ rota('POST', '/api/envios/:id/rastrear', async (env, req, id) => {
 });
 
 rota('GET', '/api/envios/:id/eventos', async (env, req, id) => {
-  await authOpcional(env, req);
+  await authUsuario(env, req);
   return { eventos: await fetchAll(env, 'SELECT * FROM eventos WHERE envio_id = ? ORDER BY id DESC LIMIT 50', [id]) };
 });
 
 rota('POST', '/api/notificacoes', async (env, req) => {
-  await authOpcional(env, req);
+  await authUsuario(env, req);
   const item = await corpo(req);
   if (typeof item.codigo !== 'string') throw new Http(422, 'codigo obrigatorio');
   const codigo = validarCodigo(item.codigo);
@@ -561,7 +577,7 @@ rota('POST', '/api/notificacoes', async (env, req) => {
 });
 
 rota('POST', '/api/notificacoes/massa', async (env, req) => {
-  await authOpcional(env, req);
+  await authUsuario(env, req);
   if (String((await corpo(req)).canal || 'email').toLowerCase() !== 'email') throw new Http(422, 'Massa disponivel para e-mail');
   if (!smtpConfigurado(env)) throw new Http(422, 'SMTP nao configurado');
   const rows = await fetchAll(env, "SELECT * FROM envios WHERE status='pendente' AND email<>'' ORDER BY id");
@@ -575,29 +591,6 @@ rota('POST', '/api/notificacoes/massa', async (env, req) => {
     } else falhas.push(r.codigo);
   }
   return { message: `${enviadas} enviado(s)`, enviadas, falhas };
-});
-
-rota('POST', '/api/auth/registrar', async (env, req) => {
-  const item = await corpo(req);
-  if (typeof item.nome !== 'string' || typeof item.email !== 'string' || typeof item.senha !== 'string')
-    throw new Http(422, 'nome, email e senha sao obrigatorios');
-  const primeiro = await contarUsuarios(env) === 0;
-  const admin = primeiro ? true : !!item.admin;
-  if (!primeiro) {
-    let s;
-    try { s = await authUsuario(env, req); } catch (e) { throw new Http(403, 'Registro restrito'); }
-    if (!s.admin) throw new Http(403, 'Apenas administradores');
-  }
-  const email = item.email.trim().toLowerCase();
-  if (!REGEX_EMAIL.test(email)) throw new Http(422, 'E-mail invalido');
-  if (!item.nome.trim()) throw new Http(422, 'Nome obrigatorio');
-  if (item.senha.length < 8) throw new Http(422, 'Senha muito curta (minimo 8)');
-  let uid;
-  try {
-    [, uid] = await execute(env, 'INSERT INTO usuarios (nome,email,senha_hash,admin) VALUES (?,?,?,?)',
-      [item.nome.trim(), email, await hashSenha(item.senha), admin ? 1 : 0]);
-  } catch (e) { throw new Http(409, 'E-mail ja cadastrado'); }
-  return { message: 'Usuario criado', id: uid, admin };
 });
 
 rota('POST', '/api/auth/login', async (env, req) => {
@@ -641,30 +634,8 @@ rota('POST', '/api/auth/trocar-senha', async (env, req) => {
   return { message: 'Senha alterada' };
 });
 
-rota('GET', '/api/usuarios', async (env, req) => {
-  const usuario = await authUsuario(env, req);
-  if (!usuario.admin) throw new Http(403, 'Apenas administradores');
-  return { usuarios: await fetchAll(env, 'SELECT id, nome, email, admin, ativo, criado_em FROM usuarios ORDER BY id') };
-});
-
-rota('PATCH', '/api/usuarios/:id', async (env, req, uid) => {
-  const usuario = await authUsuario(env, req);
-  if (!usuario.admin) throw new Http(403, 'Apenas administradores');
-  if (!(await fetchOne(env, 'SELECT id FROM usuarios WHERE id = ?', [uid]))) throw new Http(404, 'Usuario nao encontrado');
-  const payload = await corpo(req), sets = [], args = [];
-  if (payload.admin != null) { sets.push('admin = ?'); args.push(payload.admin ? 1 : 0); }
-  if (payload.ativo != null) {
-    if (uid === usuario.id && !payload.ativo) throw new Http(422, 'Voce nao pode desativar a si mesmo');
-    sets.push('ativo = ?'); args.push(payload.ativo ? 1 : 0);
-  }
-  if (!sets.length) throw new Http(422, 'Nada para atualizar');
-  await execute(env, `UPDATE usuarios SET ${sets.join(', ')} WHERE id = ?`, [...args, uid]);
-  if (payload.ativo != null && !payload.ativo) await execute(env, 'DELETE FROM sessoes WHERE usuario_id = ?', [uid]);
-  return { message: 'Usuario atualizado' };
-});
-
 rota('GET', '/api/estatisticas', async (env, req) => {
-  await authOpcional(env, req);
+  await authUsuario(env, req);
   const mapa = {};
   for (const r of await fetchAll(env, 'SELECT status, COUNT(*) AS n FROM envios GROUP BY status')) mapa[r.status] = Number(r.n);
   return {
@@ -705,6 +676,7 @@ export default {
     if (p.startsWith('/api/')) {
       const ch = cors(env, req);
       if (req.method === 'OPTIONS') return new Response(null, { status: 204, headers: ch });
+      await garantirAdmin(env); /* v28: garante a unica conta (admin@admin.com) */
       let caminhoExiste = false;
       for (const r of rotas) {
         const m = p.match(r.rx);

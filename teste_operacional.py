@@ -2,7 +2,7 @@
 """Teste operacional de ponta a ponta (fluxo do dia a dia).
 
 Sobe um servidor real (uvicorn) com banco TEMPORARIO e simula o uso normal:
-  1. cria o admin (1o uso) e faz login (testa senha errada tambem);
+  1. faz login do admin unico (admin@admin.com) — testa senha errada tambem;
   2. cadastra varias pessoas de teste (em lote);
   3. tenta duplicar um codigo (deve ser ignorado);
   4. muda o status de alguns envios;
@@ -31,7 +31,8 @@ except Exception:
     pass
 
 ROOT = os.path.dirname(os.path.abspath(__file__))
-ADMIN = {"nome": "Admin Teste", "email": "admin@teste.com", "senha": "admin12345"}
+# v28: admin unico — o servidor cria a conta admin@admin.com sozinho no boot
+ADMIN = {"email": "admin@admin.com", "senha": "admin12345"}
 
 PESSOAS = [
     ("Maria Silva",     "QX100000001BR", "(11) 98765-4321", "maria.silva@teste.com",  "Pedido #1001"),
@@ -149,9 +150,9 @@ def main():
         st, d = _req(base, "GET", "/api/health")
         check("health responde ok", st == 200 and d.get("ok") is True)
 
-        st, d = _req(base, "POST", "/api/auth/registrar", ADMIN)
-        check("cria admin no 1o uso (sem token)",
-              st == 200 and d.get("admin") is True, f"status={st} resp={d}")
+        st, d = _req(base, "GET", "/api/auth/estado")
+        check("sistema informa o admin unico",
+              st == 200 and d.get("email") == "admin@admin.com", f"status={st} resp={d}")
 
         st, d = _req(base, "POST", "/api/auth/login", {"email": ADMIN["email"], "senha": "errada"})
         check("login com senha errada -> 401", st == 401, f"status={st}")

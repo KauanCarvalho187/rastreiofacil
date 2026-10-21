@@ -61,15 +61,10 @@ def _login(client, email, senha):
 
 @pytest.fixture
 def auth(client):
-    """Cria o admin (bootstrap) + um usuario comum e devolve tokens/headers."""
-    client.post("/api/auth/registrar", json={"nome": "Admin", "email": "admin@t.com", "senha": "admin12345"})
-    adm = _login(client, "admin@t.com", "admin12345")
+    """Admin unico (admin@admin.com) — criado automaticamente no boot do app."""
+    adm = _login(client, "admin@admin.com", "admin12345")
     H = {"Authorization": "Bearer " + adm}
-    client.post("/api/auth/registrar",
-                json={"nome": "Joao", "email": "joao@t.com", "senha": "joao12345", "admin": False},
-                headers=H)
-    joao = _login(client, "joao@t.com", "joao12345")
-    return {"token": adm, "H": H, "joao": joao, "Hjoao": {"Authorization": "Bearer " + joao}}
+    return {"token": adm, "H": H}
 
 
 # ------------------------------------------------------- fixtures navegador
@@ -137,8 +132,6 @@ def live_server():
         else:
             proc.terminate()
             pytest.skip("servidor de teste nao subiu")
-        _post_json(base + "/api/auth/registrar",
-                   {"nome": "Admin", "email": "admin@teste.com", "senha": "admin12345"})
         yield base
     finally:
         proc.terminate()

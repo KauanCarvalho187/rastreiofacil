@@ -4,7 +4,10 @@ Rastreio Facil — Backend FastAPI modernizado (dark UI + Postgres/SQLite) v20.
 Melhorias v20:
 - seguranca: logout, senha min 8, rate-limit login, CORS por env, limpeza sessoes
 - performance: paginacao/busca server-side, estatisticas reais
-- gestao: usuarios CRUD, troca senha, eventos/historico, notificacao em massa
+- gestao: admin unico, troca senha, eventos/historico, notificacao em massa
+v28: modo admin unico — o sistema tem UMA conta (admin@admin.com); os
+usuarios extras foram removidos (sem tela de usuarios, sem /api/usuarios,
+sem /api/auth/registrar).
 """
 from contextlib import asynccontextmanager
 from fastapi import FastAPI, HTTPException, Request, Body, Header, Depends, Query
@@ -42,6 +45,11 @@ CORS_ORIGINS = [o.strip() for o in os.getenv("CORS_ORIGINS", "*").split(",") if 
 _LOGIN_TENTATIVAS: dict = {}
 LOGIN_MAX_TENT = int(os.getenv("LOGIN_MAX_TENT", "10"))
 LOGIN_JANELA_SEG = int(os.getenv("LOGIN_JANELA_SEG", "300"))
+# v28: admin unico — o sistema tem UMA conta de acesso (admin@admin.com).
+# A senha inicial vem do env ADMIN_SENHA (troque no 1o acesso ou defina no .env).
+ADMIN_EMAIL = (os.getenv("ADMIN_EMAIL") or "admin@admin.com").strip().lower()
+ADMIN_NOME = (os.getenv("ADMIN_NOME") or "Admin").strip() or "Admin"
+ADMIN_SENHA = os.getenv("ADMIN_SENHA") or "admin12345"
 
 def _login_bloqueado(ip: str) -> bool:
     agora = time.time()
@@ -135,10 +143,29 @@ def _e_duplicado(e: Exception) -> bool:
     txt = f"{type(e).__name__} {e}".lower()
     return "unique" in txt or "duplicat" in txt
 
-async def contar_usuarios() -> int:
-    row = await fetch_one("SELECT COUNT(*) AS n FROM usuarios")
-    return int(row["n"]) if row else 0
+async def garantir_admin() -> None:
+    """v28: admin unico.
 
+    Garante que exista exatamente uma conta de acesso: ADMIN_EMAIL (admin@admin.com),
+    com perfil de administrador e ativa. Contas antigas (criadas na era multi-usuario)
+    sao removidas — junto com as sessoes delas — para que o sistema volte a ter
+    um unico login. A senha inicial vem de ADMIN_SENHA; depois de criada, a senha
+    pode ser trocada pela tela (POST /api/auth/trocar-senha) e nao e sobrescrita aqui.
+    """
+    try:
+        row = await fetch_one("SELECT id, admin, ativo FROM usuarios WHERE email = ?", (ADMIN_EMAIL,))
+        if not row:
+            await execute(
+                "INSERT INTO usuarios (nome,email,senha_hash,admin,ativo) VALUES (?,?,?,1,1)",
+                (ADMIN_NOME, ADMIN_EMAIL, hash_senha(ADMIN_SENHA)))
+            print(f"[AUTH] admin criado: {ADMIN_EMAIL} (senha inicial: {ADMIN_SENHA}) — troque a senha no 1o acesso")
+        elif not row.get("admin") or not row.get("ativo"):
+            await execute("UPDATE usuarios SET admin=1, ativo=1 WHERE id = ?", (row["id"],))
+        # remove as demais contas (modo admin unico) e as sessoes delas
+        await execute("DELETE FROM sessoes WHERE usuario_id <> (SELECT id FROM usuarios WHERE email = ?)", (ADMIN_EMAIL,))
+        await execute("DELETE FROM usuarios WHERE email <> ?", (ADMIN_EMAIL,))
+    except Exception as e:
+        print(f"[AUTH] nao foi possivel garantir o admin: {e}")
 
 
 async def auth_usuario(authorization: str = Header(None)):
@@ -158,13 +185,6 @@ async def auth_usuario(authorization: str = Header(None)):
     if not row:
         raise HTTPException(401, "Sessao invalida ou expirada")
     return dict(row)
-
-async def auth_opcional(authorization: str = Header(None)):
-    if await contar_usuarios() == 0:
-        return {"id": 0, "nome": "setup", "email": "", "admin": True, "bootstrap": True}
-    if not authorization or not authorization.startswith("Bearer "):
-        raise HTTPException(401, "Nao autenticado")
-    return await auth_usuario(authorization)
 
 def _row_to_envio(row: dict) -> dict:
     status = (row.get("status") or "pendente")
@@ -215,16 +235,12 @@ class LoginItem(BaseModel):
     email: str
     senha: str
 
-class UsuarioCreate(BaseModel):
-    nome: str
-    email: str
-    senha: str
-    admin: bool = False
-
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     try:
         await init_db()
+        # v28: admin unico — cria/garante a conta admin@admin.com
+        await garantir_admin()
         # melhoria: limpa sessoes expiradas no boot (evita tabela crescendo p/ sempre)
         try:
             if USE_POSTGRES:
@@ -289,20 +305,19 @@ async def db_status():
 
 @app.get("/api/auth/estado")
 async def estado_auth(authorization: str = Header(None)):
-    """Melhoria: informa se o token atual e de um admin (mostra/esconde acoes de backup)."""
-    tem = await contar_usuarios() > 0
+    """v28: admin unico — informa o e-mail do admin e se o token atual e de admin."""
     admin = False
-    if tem and authorization and authorization.startswith("Bearer "):
+    if authorization and authorization.startswith("Bearer "):
         try:
             u = await auth_usuario(authorization)
             admin = bool(u.get("admin"))
         except HTTPException:
             admin = False
-    return {"temUsuarios": tem, "admin": admin}
+    return {"admin": admin, "email": ADMIN_EMAIL}
 
 
 @app.post("/api/envios")
-async def criar_envios(payload: dict = Body(...), usuario: dict = Depends(auth_opcional)):
+async def criar_envios(payload: dict = Body(...), usuario: dict = Depends(auth_usuario)):
     if not isinstance(payload, dict):
         raise HTTPException(422, "Corpo invalido")
     m = payload.get("envios") if "envios" in payload else None
@@ -383,7 +398,7 @@ async def registrar_evento(envio_id: int, de_status: str, para_status: str, por_
         pass
 
 @app.put("/api/envios/{envio_id}")
-async def atualizar_envio(envio_id: int, upd: EnvioUpdate, usuario: dict = Depends(auth_opcional)):
+async def atualizar_envio(envio_id: int, upd: EnvioUpdate, usuario: dict = Depends(auth_usuario)):
     row = await fetch_one("SELECT * FROM envios WHERE id = ?", (envio_id,))
     if not row:
         raise HTTPException(404, "Envio nao encontrado")
@@ -420,7 +435,7 @@ async def atualizar_envio(envio_id: int, upd: EnvioUpdate, usuario: dict = Depen
     return _row_to_envio(row2)
 
 @app.patch("/api/envios/{envio_id}/status")
-async def atualizar_status(envio_id: int, payload: dict = Body(...), usuario: dict = Depends(auth_opcional)):
+async def atualizar_status(envio_id: int, payload: dict = Body(...), usuario: dict = Depends(auth_usuario)):
     s = str(payload.get("status","")).lower()
     if s not in ("pendente","a_caminho","entregue"):
         raise HTTPException(422, "status deve ser pendente, a_caminho ou entregue")
@@ -436,7 +451,7 @@ async def atualizar_status(envio_id: int, payload: dict = Body(...), usuario: di
     return _row_to_envio(row)
 
 @app.patch("/api/envios/{envio_id}/notificado")
-async def marcar_notificado(envio_id: int, payload: dict = Body({}), usuario: dict = Depends(auth_opcional)):
+async def marcar_notificado(envio_id: int, payload: dict = Body({}), usuario: dict = Depends(auth_usuario)):
     anterior = await fetch_one("SELECT status FROM envios WHERE id = ?", (envio_id,))
     if not anterior:
         raise HTTPException(404, "Envio nao encontrado")
@@ -453,7 +468,7 @@ async def marcar_notificado(envio_id: int, payload: dict = Body({}), usuario: di
     return {"message": "Marcado como notificado"}
 
 @app.delete("/api/envios/{envio_id}")
-async def deletar_envio(envio_id: int, usuario: dict = Depends(auth_opcional)):
+async def deletar_envio(envio_id: int, usuario: dict = Depends(auth_usuario)):
     # Soft delete: move para lixeira (status='excluido'), guarda quem excluiu e status anterior
     row = await fetch_one("SELECT id, status FROM envios WHERE id=?", (envio_id,))
     if not row:
@@ -521,7 +536,7 @@ def _rastreio_resposta(row: dict, cache: dict, em_cache: bool, aviso: str = "", 
     }
 
 @app.post("/api/envios/{envio_id}/rastrear")
-async def rastrear_envio(envio_id: int, payload: dict = Body({}), usuario: dict = Depends(auth_opcional)):
+async def rastrear_envio(envio_id: int, payload: dict = Body({}), usuario: dict = Depends(auth_usuario)):
     """Consulta os eventos do objeto na API de rastreio (com cache) e marca 'entregue' sozinho."""
     row = await fetch_one("SELECT * FROM envios WHERE id = ? AND status <> 'excluido'", (envio_id,))
     if not row:
@@ -616,7 +631,7 @@ async def enviar_email(destino, assunto, html) -> bool:
         return False
 
 @app.post("/api/notificacoes")
-async def enviar_notificacao(item: NotificacaoItem, usuario: dict = Depends(auth_opcional)):
+async def enviar_notificacao(item: NotificacaoItem, usuario: dict = Depends(auth_usuario)):
     codigo = validar_codigo(item.codigo)
     canal = str(item.canal or "email").strip().lower()
     if canal == "whatsapp":
@@ -643,7 +658,7 @@ class MassaItem(BaseModel):
     canal: str = "email"
 
 @app.post("/api/notificacoes/massa")
-async def notificacao_massa(item: MassaItem, usuario: dict = Depends(auth_opcional)):
+async def notificacao_massa(item: MassaItem, usuario: dict = Depends(auth_usuario)):
     """Melhoria: notifica pendentes de uma vez (antes: 1 por 1)."""
     if (item.canal or "email").lower() != "email":
         raise HTTPException(422, "Massa disponivel para e-mail")
@@ -665,33 +680,6 @@ async def notificacao_massa(item: MassaItem, usuario: dict = Depends(auth_opcion
         except Exception:
             falhas.append(r.get("codigo"))
     return {"message": f"{enviadas} enviado(s)", "enviadas": enviadas, "falhas": falhas}
-
-@app.post("/api/auth/registrar")
-async def registrar(item: UsuarioCreate, authorization: str = Header(None)):
-    primeiro = await contar_usuarios() == 0
-    admin = True if primeiro else item.admin
-    if not primeiro:
-        if not authorization or not authorization.startswith("Bearer "):
-            raise HTTPException(403, "Registro restrito")
-        try:
-            s = await auth_usuario(authorization)
-        except HTTPException:
-            raise HTTPException(403, "Registro restrito")
-        if not s.get("admin"):
-            raise HTTPException(403, "Apenas administradores")
-    email = item.email.strip().lower()
-    if not REGEX_EMAIL.match(email):
-        raise HTTPException(422, "E-mail invalido")
-    if not item.nome or not item.nome.strip():
-        raise HTTPException(422, "Nome obrigatorio")
-    if len(item.senha) < 8:
-        raise HTTPException(422, "Senha muito curta (minimo 8)")
-    try:
-        _, uid = await execute("INSERT INTO usuarios (nome,email,senha_hash,admin) VALUES (?,?,?,?)",
-            (item.nome.strip(), email, hash_senha(item.senha), 1 if admin else 0))
-    except Exception:
-        raise HTTPException(409, "E-mail ja cadastrado")
-    return {"message": "Usuario criado", "id": uid, "admin": bool(admin)}
 
 @app.post("/api/auth/login")
 async def login(item: LoginItem, request: Request):
@@ -735,38 +723,8 @@ async def trocar_senha(item: TrocaSenhaItem, usuario: dict = Depends(auth_usuari
     await execute("UPDATE usuarios SET senha_hash = ? WHERE id = ?", (hash_senha(item.senha_nova), usuario["id"]))
     return {"message": "Senha alterada"}
 
-@app.get("/api/usuarios")
-async def listar_usuarios(usuario: dict = Depends(auth_usuario)):
-    """Melhoria: gestao de equipe — antes so via SQL direto."""
-    if not usuario.get("admin"):
-        raise HTTPException(403, "Apenas administradores")
-    rows = await fetch_all("SELECT id, nome, email, admin, ativo, criado_em FROM usuarios ORDER BY id")
-    return {"usuarios": [dict(r) for r in rows]}
-
-@app.patch("/api/usuarios/{uid}")
-async def atualizar_usuario(uid: int, payload: dict = Body(...), usuario: dict = Depends(auth_usuario)):
-    if not usuario.get("admin"):
-        raise HTTPException(403, "Apenas administradores")
-    row = await fetch_one("SELECT * FROM usuarios WHERE id = ?", (uid,))
-    if not row:
-        raise HTTPException(404, "Usuario nao encontrado")
-    sets, args = [], []
-    if payload.get("admin", None) is not None:
-        sets.append("admin = ?"); args.append(1 if payload.get("admin") else 0)
-    if payload.get("ativo", None) is not None:
-        if uid == usuario["id"] and not payload.get("ativo"):
-            raise HTTPException(422, "Voce nao pode desativar a si mesmo")
-        sets.append("ativo = ?"); args.append(1 if payload.get("ativo") else 0)
-    if not sets:
-        raise HTTPException(422, "Nada para atualizar")
-    args.append(uid)
-    await execute(f"UPDATE usuarios SET {', '.join(sets)} WHERE id = ?", tuple(args))
-    if payload.get("ativo", None) is not None and not payload.get("ativo"):
-        await execute("DELETE FROM sessoes WHERE usuario_id = ?", (uid,))
-    return {"message": "Usuario atualizado"}
-
 @app.get("/api/envios")
-async def listar_envios(usuario: dict = Depends(auth_opcional),
+async def listar_envios(usuario: dict = Depends(auth_usuario),
     q: str = Query(""), status: str = Query(""),
     page: int = Query(1, ge=1), limit: int = Query(200, ge=1, le=500)):
     """Melhoria: paginacao + busca server-side (antes: SELECT * sem limite).
@@ -806,10 +764,10 @@ async def listar_envios(usuario: dict = Depends(auth_opcional),
 app.mount("/static", StaticFiles(directory="static"), name="static")
 
 # versao do front: o navegador compara e recarrega sozinho quando o servidor atualiza (evita aba velha travada)
-APP_VERSAO = "27"
+APP_VERSAO = "28"
 
 @app.get("/api/estatisticas")
-async def estatisticas(usuario: dict = Depends(auth_opcional)):
+async def estatisticas(usuario: dict = Depends(auth_usuario)):
     """Melhoria: dashboard contado no SQL (antes: contado no navegador)."""
     rows = await fetch_all("SELECT status, COUNT(*) AS n FROM envios GROUP BY status")
     mapa = {r["status"]: int(r["n"]) for r in rows}
@@ -831,7 +789,7 @@ async def backup_banco(usuario: dict = Depends(auth_usuario)):
                         filename=f"backup-rastreio-{stamp}.db")
 
 @app.get("/api/envios/{envio_id}/eventos")
-async def historico_envio(envio_id: int, usuario: dict = Depends(auth_opcional)):
+async def historico_envio(envio_id: int, usuario: dict = Depends(auth_usuario)):
     rows = await fetch_all("SELECT * FROM eventos WHERE envio_id = ? ORDER BY id DESC LIMIT 50", (envio_id,))
     return {"eventos": [dict(r) for r in rows]}
 

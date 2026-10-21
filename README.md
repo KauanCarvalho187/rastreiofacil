@@ -9,7 +9,7 @@ consulta automática de eventos.
 - Banco **SQLite** (local), **Postgres** (`DATABASE_URL`) ou **Cloudflare D1**
 - Roda também como **Cloudflare Worker** (`cloudflare/worker.js`, mesmas rotas `/api`)
 
-> Versão atual do front/back: **27**
+> Versão atual do front/back: **28**
 
 ## Recursos
 
@@ -18,7 +18,8 @@ consulta automática de eventos.
 - **Rastreio automático** na API Wonca Labs (com cache) que marca "entregue" sozinho.
 - **Lixeira** (exclusão reversível) e **backup** do banco (admin).
 - **Histórico** de mudanças de status por envio.
-- **Autenticação** com sessões revogáveis, senha com PBKDF2 e rate-limit de login.
+- **Autenticação** com **uma única conta** (`admin@admin.com`), sessões revogáveis, senha com
+  PBKDF2 e rate-limit de login.
 - **Modo offline** no navegador (`localStorage`) quando não há backend.
 - **Anti-aba-velha**: o front se recarrega quando o servidor é atualizado.
 
@@ -32,7 +33,9 @@ Guia completo em **[`COMO_RODAR.md`](COMO_RODAR.md)**.
 - **Cloudflare:** `wrangler deploy` (Worker + D1 + assets)
 - **Nuvem:** `uvicorn main:app --host 0.0.0.0 --port $PORT` com `DATABASE_URL`
 
-Primeiro acesso: botão **👤 → "Criar admin (1º uso)"**.
+Primeiro acesso: clique em **👤** e entre com a senha do admin. A conta **admin@admin.com** é
+criada sozinha no primeiro boot do servidor; a senha inicial vem de `ADMIN_SENHA`
+(padrão `admin12345` — defina no `.env` ou troque depois de entrar). Não existem outros logins.
 
 ## Testes
 
@@ -42,15 +45,16 @@ pytest                      # suíte (API in-process + rastreio)
 python test_analise_erros.py  # verificador estático (inclui paridade main.py x worker.js)
 pytest --browser             # testes de navegador (Selenium + Chrome)
 python teste_navegador_demo.py --pausa 20   # demo no Chrome: login, cadastro, lixeira, Excel
-python teste_usuarios_brave.py --pausa 20   # demo no Brave: cria usuário não-admin pela tela 👥
+python teste_operacional.py                 # E2E pela API (login, cadastro em lote, lixeira)
 ```
 
-O CI (`.github/workflows/ci.yml`) roda pytest + verificador estático + E2E + navegador a cada push/PR.
+O CI (`.github/workflows/ci.yml`) roda pytest + verificador estático + navegador a cada push/PR.
 
 ## Documentação
 
 - **[`DOCUMENTACAO.md`](DOCUMENTACAO.md)** — arquitetura, banco, API completa, deploy, troubleshooting.
 - **[`COMO_RODAR.md`](COMO_RODAR.md)** — passo a passo de execução.
+- **[`PROMPT-VERIFICACAO-PROFUNDA.md`](PROMPT-VERIFICACAO-PROFUNDA.md)** — roteiro de auditoria profunda e autorreparo.
 
 ## Estrutura (resumo)
 

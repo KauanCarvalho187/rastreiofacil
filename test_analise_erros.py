@@ -1,6 +1,11 @@
 # -*- coding: utf-8 -*-
 """Teste estatico (sem servidor): valida as correcoes aplicadas + regressoes."""
 import os, sys
+# Windows: o console em cp1252 quebra em textos com seta/emoji — força UTF-8
+try:
+    sys.stdout.reconfigure(encoding="utf-8")
+except Exception:
+    pass
 BASE = os.path.dirname(os.path.abspath(__file__))
 main = open(os.path.join(BASE, "main.py"), encoding="utf-8").read()
 js = open(os.path.join(BASE, "static", "app.js"), encoding="utf-8").read()
@@ -29,7 +34,6 @@ check("PUT impede codigo duplicado (409)", "ja usado em outro envio" in main)
 check("celular: 0055 vira 55+", '"55" + d[4:]' in main or "'55' + d.slice(4)" in js)
 check("notificacoes: 404 codigo nao cadastrado", "Codigo nao cadastrado" in main)
 check("notificacoes: canal case-insensitive", "strip().lower()" in main)
-check("registro exige nome", "Nome obrigatorio" in main)
 check("email acentos via Header/formataddr", "formataddr" in main)
 check("smtp porta 465 usa use_tls", "use_tls" in main)
 check("POST rejeita corpo nao-dict", "Corpo invalido" in main)
@@ -100,16 +104,31 @@ check("lista: busca todas as paginas do servidor (nao trava em 200)",
 check("rota /api/notificacoes/massa definida uma unica vez (sem duplicata morta)",
       main.count('@app.post("/api/notificacoes/massa")') == 1)
 # melhorias v22 (regressoes — nao remover)
-check("v27: versao front/back em 27 (abas antigas recarregam)",
-      'APP_VERSAO = "27"' in main and "APP_V = '27'" in js and "?v=27" in html)
-check("v27: admin nao consegue rebaixar a si mesmo pela tela (self-admin-guard)",
-      "self-admin-guard" in js)
+check("v28: versao front/back em 28 (abas antigas recarregam)",
+      'APP_VERSAO = "28"' in main and "APP_V = '28'" in js and "?v=28" in html)
+check("v28: admin unico — sem tela de usuarios no front",
+      "btn-usuarios" not in html and "modal-usuarios" not in html
+      and "btn-usuarios" not in js and "modal-usuarios" not in js)
+check("v28: admin unico — sem cadastro de usuarios no backend",
+      '@app.post("/api/auth/registrar")' not in main
+      and '@app.get("/api/usuarios")' not in main
+      and '@app.patch("/api/usuarios/{uid}")' not in main)
+check("v28: admin unico — o login mostra o e-mail fixo do admin",
+      "admin@admin.com" in html and "l-email-fix" in html)
+check("v28: backend garante a conta admin@admin.com no boot",
+      'ADMIN_EMAIL = (os.getenv("ADMIN_EMAIL") or "admin@admin.com")' in main
+      and "garantir_admin()" in main and "async def garantir_admin" in main)
+worker = open(os.path.join(BASE, "cloudflare", "worker.js"), encoding="utf-8").read()
+check("v28: Worker da Cloudflare tambem e admin unico",
+      "garantirAdmin(env)" in worker and "admin@admin.com" in worker
+      and "rota('POST', '/api/auth/registrar'" not in worker
+      and "rota('GET', '/api/usuarios'" not in worker
+      and "rota('PATCH', '/api/usuarios/:id'" not in worker)
 check("v23: rastreio automatico — rota, cache e modal",
       '@app.post("/api/envios/{envio_id}/rastrear")' in main and "_cache_valido(cache)" in main
       and 'id="modal-rt"' in html and "+'/rastrear'" in js)
-worker = open(os.path.join(BASE, "cloudflare", "worker.js"), encoding="utf-8").read()
-check("v27: Worker da Cloudflare na mesma versao que o main.py",
-      "const APP_VERSAO = '27'" in worker)
+check("v28: Worker da Cloudflare na mesma versao que o main.py",
+      "const APP_VERSAO = '28'" in worker)
 # correcao v25: a lixeira era inalcancavel no front (a listagem padrao da API exclui
 # status='excluido'); agora o admin carrega a lixeira e "Todos" nao mistura excluidos.
 check("v25: admin carrega a lixeira e 'Todos' oculta excluidos",

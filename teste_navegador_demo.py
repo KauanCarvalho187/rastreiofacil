@@ -2,7 +2,7 @@
 """Demonstracao E2E no Google Chrome (Selenium) — abre o navegador DE VERDADE.
 
 Fluxo do dia a dia, todo clicado na interface:
-  1. cria o admin (1o uso) e faz login;
+  1. faz login do admin unico (admin@admin.com);
   2. cadastra varias pessoas de teste pelo formulario;
   3. muda o status de algumas clicando nos cards;
   4. apaga algumas (vao para a lixeira) e mostra a lixeira;
@@ -39,7 +39,7 @@ from selenium.webdriver.support.ui import Select, WebDriverWait
 
 ROOT = os.path.dirname(os.path.abspath(__file__))
 EVID = os.path.join(ROOT, "evidencias")
-ADMIN = {"nome": "Admin Demo", "email": "admin@demo.com", "senha": "admin12345"}
+ADMIN = {"email": "admin@admin.com", "senha": "admin12345"}
 
 PESSOAS = [
     ("Maria Silva",    "QX100000001BR", "(11) 98765-4321", "maria.silva@teste.com",   "Pedido #1001"),
@@ -230,18 +230,14 @@ def main():
         shot("tela_inicial")
 
         drv.find_element(By.ID, "btn-login").click()
-        wait.until(EC.visibility_of_element_located((By.ID, "l-email")))
-        # 1o uso: revela o campo "Nome" e cria o admin
-        drv.find_element(By.ID, "btn-do-reg").click()
-        wait.until(EC.visibility_of_element_located((By.ID, "l-nome")))
-        drv.find_element(By.ID, "l-nome").send_keys(ADMIN["nome"])
-        drv.find_element(By.ID, "l-email").send_keys(ADMIN["email"])
+        wait.until(EC.visibility_of_element_located((By.ID, "l-senha")))
+        # v28: admin unico — o modal so pede a senha (admin@admin.com)
         drv.find_element(By.ID, "l-senha").send_keys(ADMIN["senha"])
         shot("login_preenchido")
-        drv.find_element(By.ID, "btn-do-reg").click()
+        drv.find_element(By.ID, "btn-do-login").click()
 
         wait.until(lambda d: not d.find_element(By.ID, "modal-login").is_displayed())
-        check("admin criado e login efetuado", True)
+        check("login efetuado com o admin unico", True)
         wait.until(lambda d: d.find_element(By.ID, "btn-backup").is_displayed())
         check("backup (admin) ficou visivel", True)
         shot("logado")

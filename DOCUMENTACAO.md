@@ -4,8 +4,8 @@
 > Backend **FastAPI (Python)** + Frontend **HTML/CSS/JS vanilla** (sem build) +
 > Banco **SQLite** (local), **Postgres** (`DATABASE_URL`) ou **Cloudflare D1**.
 >
-> **Versão do front/back: `27`** (campo `APP_VERSAO` no `main.py` e `APP_V` no `static/app.js`).
-> Documentação revisada em **13/10/2026**, conferida linha a linha contra
+> **Versão do front/back: `28`** (campo `APP_VERSAO` no `main.py` e `APP_V` no `static/app.js`).
+> Documentação revisada em **21/10/2026**, conferida linha a linha contra
 > `main.py`, `db.py`, `validacao.py`, `rastreio.py`, `static/app.js`, `static/index.html`,
 > `cloudflare/worker.js` e os testes.
 
@@ -78,9 +78,6 @@ rastreio-asistema1_1/
 ├─ validacao.py             # Regras de validação compartilhadas (código, e-mail, celular)
 ├─ rastreio.py              # Cliente da API de rastreio + normalização dos eventos
 ├─ importar_planilha.py     # CLI: importa CSV/Excel direto no banco
-├─ inspecionar_db.py        # CLI: inspeciona o banco
-├─ reset_senha.py           # CLI: redefine a senha de um usuário
-├─ limpar_teste.py          # CLI: limpa dados de teste
 ├─ servidor-local.ps1       # Servidor de arquivos (PowerShell) sem Python, porta 8080
 ├─ abrir-servidor-local.bat # Atalho para o servidor-local.ps1 (só interface)
 ├─ iniciar-sistema.bat      # Atalho: cria/usa .venv, instala deps e sobe o backend
@@ -104,16 +101,8 @@ rastreio-asistema1_1/
 ├─ pytest.ini               # Config do pytest + marcador "browser"
 │
 ├─ test_analise_erros.py    # Verificador estático (rotas, HTML, JS, paridade Worker)
-├─ teste_fluxo.py           # E2E via ASGI (banco temporário)
-├─ teste_rastreio.py        # Rastreio com provedor simulado
-├─ teste_api_real.py        # E2E HTTP contra servidor em 127.0.0.1:3001
-├─ teste_crud.py            # CRUD exaustivo da API (HTTP)
-├─ teste_bordas.py          # Casos adversariais (payloads, SQL injection, unicode)
-├─ teste_canais.py          # E2E navegador dos 3 canais de notificação
-├─ teste_chrome.py          # E2E navegador (CRUD na UI)
 ├─ teste_operacional.py     # E2E da API: login, cadastro em lote, lixeira/purgar, Excel
 ├─ teste_navegador_demo.py  # Demonstração no Chrome (Selenium visível) + prints em evidencias/
-├─ teste_usuarios_brave.py  # Demonstração no Brave: criar usuário não-admin + prints em evidencias_usuarios/
 │
 ├─ Dockerfile               # Imagem (usuário non-root + HEALTHCHECK)
 ├─ docker-compose.yml       # Compose (volume do SQLite; Postgres opcional)
@@ -123,7 +112,9 @@ rastreio-asistema1_1/
 ├─ .env.example             # Modelo de configuração
 ├─ .github/workflows/ci.yml # CI (GitHub Actions)
 ├─ DOCUMENTACAO.md          # Este arquivo
-└─ COMO_RODAR.md            # Guia rápido de execução
+├─ COMO_RODAR.md            # Guia rápido de execução
+├─ README.md                # Resumo do projeto (GitHub)
+└─ PROMPT-VERIFICACAO-PROFUNDA.md # Roteiro de verificação profunda do sistema
 ```
 
 Arquivos/pastas ignorados no git: `.venv/`, `database.db`, `*.db`, `.env`, `.dev.vars`,
@@ -180,8 +171,8 @@ compatibilidade com Live Server (`:5500`–`:5503`) e `file://`. **Em produção
 `CORS_ORIGINS=https://seu-dominio.com`.
 
 ### 5.3 Versionamento do front (anti "aba velha")
-O `app.js` guarda `APP_V = '27'` e pergunta `GET /api/versao`. Se o servidor responder outra
-versão, o front se recarrega sozinho. O `index.html` referencia os assets com `?v=27`.
+O `app.js` guarda `APP_V = '28'` e pergunta `GET /api/versao`. Se o servidor responder outra
+versão, o front se recarrega sozinho. O `index.html` referencia os assets com `?v=28`.
 **Ao publicar mudanças no front, suba a versão nos dois lugares** (`main.py` → `APP_VERSAO`
 e `static/app.js` → `APP_V`, além do `?v=` no `index.html` e no `cloudflare/worker.js`).
 
@@ -202,13 +193,17 @@ O `db.py` expõe: `fetch_all`, `fetch_one`, `execute`, `init_db`, `db_status_inf
 | Tabela | Campos principais |
 |---|---|
 | `envios` | `id`, `destinatario`, `codigo`, `celular`, `email`, `descricao`, `status`, `notificado`, `criado_em`, `atualizado_em`, `criado_por`, `excluido_por`, `excluido_em`, `status_anterior` |
-| `usuarios` | `id`, `nome`, `email` (único), `senha_hash`, `admin`, `ativo`, `criado_em` |
+| `usuarios` | `id`, `nome`, `email` (único), `senha_hash`, `admin`, `ativo`, `criado_em` — **v28: sempre 1 linha** (o admin) |
 | `sessoes` | `token` (PK), `usuario_id`, `expira_em` |
 | `eventos` | `id`, `envio_id`, `de_status`, `para_status`, `por_usuario`, `detalhe`, `criado_em` |
 | `rastreios` | `id`, `envio_id` (único), `situacao`, `carrier`, `eventos` (JSON), `consultado_em` |
 
 Índices: `idx_envios_codigo`, `idx_envios_status`, `idx_eventos_envio` e o **índice único**
 `idx_envios_codigo_unico` (um código de rastreio só pode existir uma vez).
+
+> **v28:** a tabela `usuarios` continua no banco (o login precisa dela), mas passa a ter
+> **uma única linha**: a conta do admin. Contas antigas são apagadas no boot do servidor
+> (junto com as sessões) — ver §7.
 
 ### 6.3 Migrações leves
 O `init_db` se adapta a bancos antigos:
@@ -229,16 +224,45 @@ O `init_db` se adapta a bancos antigos:
 
 ## 7. Autenticação e sessões
 
+O sistema tem **uma única conta de acesso**: o **admin**. Não existe cadastro de usuários,
+nem tela/API de gestão de contas.
+
+### 7.1 A conta única
+
+| Item | Valor |
+|---|---|
+| E-mail (login) | `ADMIN_EMAIL` — padrão **`admin@admin.com`** |
+| Nome exibido | `ADMIN_NOME` — padrão `Admin` |
+| Senha inicial | `ADMIN_SENHA` — padrão `admin12345` (8–12 caracteres; troque no 1º acesso) |
+
+**`garantir_admin()`** roda no boot do servidor (`lifespan` do FastAPI) e, no Worker da
+Cloudflare, a cada requisição `/api` (`garantirAdmin(env)`). Ela:
+
+1. cria a conta `ADMIN_EMAIL` se ainda não existir, com a senha de `ADMIN_SENHA`;
+2. garante que ela está com `admin=1` e `ativo=1` (repromove/reativa se alguém mexer no banco);
+3. **apaga todas as outras contas** (`DELETE FROM usuarios WHERE email <> ?`) e as
+   **sessões** delas (`DELETE FROM sessoes WHERE usuario_id <> ...`).
+
+> ⚠️ A senha de `ADMIN_SENHA` só vale **na criação** da conta. Depois que ela existe,
+> trocar o `.env` não muda a senha do banco — use `POST /api/auth/trocar-senha` na tela.
+
+> 🔁 **Migração de bancos antigos:** quem vem da era multi-usuário tem as contas extras
+> apagadas no primeiro boot — o sistema volta a ter um único login automaticamente.
+
+### 7.2 Mecanismo
+
 - **Senha:** armazenada como `PBKDF2-HMAC-SHA256`, 100.000 iterações, sal aleatório de 16 bytes
   (`sal$hash`). A senha **nunca** é guardada em texto puro.
 - **Sessão:** token aleatório (`secrets.token_hex(32)`) na tabela `sessoes`, com validade de
   `SESSAO_DIAS` (padrão 7). O cliente envia `Authorization: Bearer <token>`.
-- **Bootstrap:** enquanto não há usuários, `POST /api/auth/registrar` cria o primeiro como **admin**
-  sem precisar de token. Depois disso, só um **admin** cria usuários.
+- **Login:** `POST /api/auth/login` com `{email, senha}` — o e-mail precisa ser o do admin.
 - **Rate-limit de login:** por IP, `LOGIN_MAX_TENT` (10) falhas em `LOGIN_JANELA_SEG` (300s) → `429`.
 - **Logout:** `POST /api/auth/logout` **revoga** o token no banco (não é só no navegador).
+- **Troca de senha:** `POST /api/auth/trocar-senha` (senha nova ≥ 8 caracteres).
+- **Rotas de dados:** todas exigem token (`Depends(auth_usuario)`) — **não existe modo anônimo**.
 - Sessões **expiradas** são limpas no boot do app (`lifespan`).
-- `GET /api/auth/estado` informa `{temUsuarios, admin}` — usado pelo front para exibir ações de admin.
+- `GET /api/auth/estado` responde `{admin, email}` — o front usa o `email` para mostrar o login fixo
+  e o `admin` para decidir se exibe o botão de **Backup**.
 
 ---
 
@@ -253,17 +277,20 @@ Erros do FastAPI vêm como `{"detail": "mensagem"}`.
 |---|---|---|
 | GET | `/api/health` | `{ok, db:{configured,connected,driver,url_safe}, smtp, rastreio}` |
 | GET | `/api/db-status` | Status detalhado do banco |
-| GET | `/api/versao` | `{versao}` (hoje `"27"`) |
-| GET | `/api/auth/estado` | `{temUsuarios, admin}` (usa o token do header, se houver) |
+| GET | `/api/versao` | `{versao}` (hoje `"28"`) |
+| GET | `/api/auth/estado` | `{admin, email}` — `admin` = o token do header é de admin; `email` = login do admin (`admin@admin.com`) |
 
 ### 8.2 Autenticação
 
 | Método | Rota | Corpo | Observações |
 |---|---|---|---|
-| POST | `/api/auth/registrar` | `{nome, email, senha, admin?}` | 1º usuário vira admin sem token; depois exige admin. `senha` ≥ 8. `409` se e-mail existe. |
-| POST | `/api/auth/login` | `{email, senha}` | `{token, user:{id,nome,email,admin}}`; `401` inválido; `429` rate-limit. |
+| POST | `/api/auth/login` | `{email, senha}` | `{token, user:{id,nome,email,admin}}`; `401` inválido; `429` rate-limit. Só existe a conta do admin. |
 | POST | `/api/auth/logout` | — (header) | Revoga o token. |
 | POST | `/api/auth/trocar-senha` | `{senha_atual, senha_nova}` | `401` senha atual errada; `422` nova < 8. |
+
+> **v28:** não existe mais `POST /api/auth/registrar` (cadastro de usuário) nem
+> `GET /api/usuarios` / `PATCH /api/usuarios/{uid}` (gestão de contas). A conta do admin
+> é criada sozinha no boot do servidor (§7).
 
 ### 8.3 Envios
 
@@ -279,6 +306,10 @@ Erros do FastAPI vêm como `{"detail": "mensagem"}`.
 | DELETE | `/api/envios/{id}/purga` | **Admin.** Apaga de vez (+ eventos e rastreios). |
 | POST | `/api/envios/{id}/rastrear` | Consulta o provedor (ver §11). |
 | GET | `/api/envios/{id}/eventos` | Últimos 50 eventos (auditoria). |
+
+> **v28:** todas as rotas desta tabela exigem **token** (`Authorization: Bearer <token>`);
+> sem ele a resposta é `401`. Como existe **uma única conta** (o admin), os itens marcados
+> como "**Admin.**" são liberados para o único usuário do sistema.
 
 **POST /api/envios — exemplo**
 ```json
@@ -321,14 +352,15 @@ Cada envio traz `criado_por_nome` e, para admins, `excluido_por_nome`.
 `email`, `descricao`, `status`. Erros: `404` não existe; `422` destinatário vazio ou sem contato;
 `409` código já usado por outro envio.
 
-### 8.4 Gestão, dashboard e backup
+### 8.4 Dashboard e backup
 
 | Método | Rota | Descrição |
 |---|---|---|
-| GET | `/api/usuarios` | **Admin.** Lista usuários (sem expor hash). |
-| PATCH | `/api/usuarios/{uid}` | **Admin.** `{admin?, ativo?}`; não permite desativar a si mesmo (`422`). Desativar revoga as sessões. |
 | GET | `/api/estatisticas` | `{total, pendente, a_caminho, entregue}` (contado no SQL). |
 | GET | `/api/backup` | **Admin.** Baixa o arquivo SQLite (`backup-rastreio-<data>.db`). `400` se Postgres; `404` se o arquivo não existe. |
+
+> **v28:** as rotas de gestão de usuários (`GET /api/usuarios` e `PATCH /api/usuarios/{uid}`)
+> foram **removidas**. Não há mais lista de contas nem alteração de perfil: existe uma só conta.
 
 ### 8.5 Páginas
 
@@ -343,7 +375,9 @@ Cada envio traz `criado_por_nome` e, para admins, `excluido_por_nome`.
 ## 9. Funcionalidades do frontend
 
 - **Tela única** (`index.html`): cadastro, importação, lista, estatísticas e modais.
-- **Autenticação:** modal de login/Criar-admin; botões que só aparecem para admin (backup).
+- **Autenticação:** modal de login com **apenas o campo de senha** — o e-mail do admin é fixo e
+  aparece na tela (preenchido com o valor de `GET /api/auth/estado`). Botão que só aparece para
+  admin (backup).
 - **Cadastro rápido** e **em lote** (textarea de CSV ou arraste de arquivo `.csv/.xlsx/.xls`).
 - **Lista** com busca (com **debounce** de 150ms), filtro por status (cards clicáveis) e
   lixeira. A busca percorre **todas as páginas** do servidor (não trava em 200).
@@ -438,6 +472,9 @@ Copie `.env.example` para `.env` (nunca commite o `.env`).
 | `CORS_ORIGINS` | `*` | Origens permitidas (produção: seu domínio) |
 | `LOGIN_MAX_TENT` | `10` | Tentativas de login por IP |
 | `LOGIN_JANELA_SEG` | `300` | Janela do rate-limit (s) |
+| `ADMIN_EMAIL` | `admin@admin.com` | Login da única conta de acesso |
+| `ADMIN_NOME` | `Admin` | Nome exibido do admin |
+| `ADMIN_SENHA` | `admin12345` | Senha **inicial** do admin (vale só na criação da conta) |
 | `RASTREIO_API_KEY` | — | Chave da API de rastreio |
 | `RASTREIO_API_URL` | API Wonca | URL do provedor (raramente muda) |
 | `RASTREIO_CACHE_MIN` | `30` | Minutos de cache do rastreio |
@@ -461,17 +498,21 @@ docker compose up -d --build
 - Para Postgres, descomente o serviço `db:` no `docker-compose.yml` e ajuste `DATABASE_URL`.
 
 ### 13.2 Cloudflare Workers + D1
-1. `wrangler d1 create rastreio-facil` → copie o `database_id` para `wrangler.jsonc`.
+1. `wrangler d1 create rastreio-facil` → copie o `database_id` para o `wrangler.jsonc`.
 2. `wrangler d1 execute rastreio-facil --remote --file cloudflare/schema.sql`.
 3. `wrangler secret put RASTREIO_API_KEY` (e `SMTP_USER`/`SMTP_PASS`).
-4. `wrangler deploy`.
+4. `wrangler secret put ADMIN_SENHA` — senha inicial do `admin@admin.com`.
+5. `wrangler deploy`.
+
+> O e-mail e o nome do admin ficam no `vars` do `wrangler.jsonc` (`ADMIN_EMAIL` / `ADMIN_NOME`).
 
 > **Regra de ouro:** `cloudflare/worker.js` e `cloudflare/schema.sql` devem acompanhar o
 > `main.py`/`db.py`. O `test_analise_erros.py` compara as rotas dos dois e o `APP_VERSAO`.
 
 ### 13.3 Nuvem (Render/Railway/VPS)
 Build `pip install -r requirements.txt`; start
-`uvicorn main:app --host 0.0.0.0 --port $PORT`; configure `DATABASE_URL` e os segredos.
+`uvicorn main:app --host 0.0.0.0 --port $PORT`; configure `DATABASE_URL` e os segredos
+(inclusive `ADMIN_EMAIL`/`ADMIN_SENHA`).
 
 ---
 
@@ -499,28 +540,22 @@ Marcadores são configurados em `pytest.ini`; sem `--browser`, os testes de nave
 Confere invariantes de código/HTML/JS sem subir nada, incluindo:
 versão front/back, **paridade de rotas** entre `main.py` e `cloudflare/worker.js`
 (método + caminho), headers de segurança, debounce da busca, índice único de código,
-e "arquivos mortos" que não podem voltar. Rode: `python test_analise_erros.py`.
+o modo **admin único** (sem tela nem rotas de usuários) e "arquivos mortos" que não podem
+voltar. Rode: `python test_analise_erros.py`.
 
-### 14.3 Scripts E2E manuais (contra servidor real em `127.0.0.1:3001`)
-`teste_fluxo.py`, `teste_rastreio.py` (banco temporário, sem servidor) e, contra um servidor real:
-`teste_api_real.py`, `teste_crud.py`, `teste_bordas.py`, `teste_canais.py`, `teste_chrome.py`.
-Semeie `admin@empresa.com` / `admin12345`.
-
+### 14.3 Scripts E2E manuais
 Dois scripts sobem o servidor sozinhos (banco temporário) e não precisam de nada semeado:
 
-- `python teste_operacional.py` — E2E da API: health, bootstrap do admin, login (ok/401),
+- `python teste_operacional.py` — E2E da API: health, criação do admin, login (ok/401),
   cadastro de 8 pessoas, duplicado, status, lixeira (excluir/restaurar/purgar), estatísticas e Excel.
 - `python teste_navegador_demo.py --pausa 20` — abre o **Chrome visível** e clica o fluxo de verdade
   (login → cadastrar várias → mudar status → apagar → ver lixeira → **Exportar Excel**), salvando
   prints de cada etapa em `evidencias/` e a planilha em `envios_teste.xlsx`.
-- `python teste_usuarios_brave.py --pausa 20` — abre o **Brave** (ou `--chrome`) e cria um **usuário
-  não-admin** pela tela 👥 *Usuários*, provando que ele não vê a gestão de usuários; prints em
-  `evidencias_usuarios/`. Use `--base http://127.0.0.1:3000` para rodar no servidor que já está no ar.
 
 ### 14.4 CI
-`.github/workflows/ci.yml` roda em push/PR: `test_analise_erros.py`, `pytest`,
-`teste_fluxo.py` e `teste_rastreio.py` (Python 3.12), mais um job `navegador` que roda
-`pytest --browser` (Chrome headless) cobrindo login, cadastro e lixeira na interface.
+`.github/workflows/ci.yml` roda em push/PR: o verificador estático `test_analise_erros.py` e a
+suíte `pytest` (Python 3.12), mais um job `navegador` que roda `pytest --browser` (Chrome headless)
+cobrindo login, cadastro e lixeira na interface.
 
 > **Dica Windows:** se aparecer `UnicodeEncodeError` nos scripts (por causa de `→`), rode com
 > `set PYTHONUTF8=1`.
@@ -539,6 +574,7 @@ Dois scripts sobem o servidor sozinhos (banco temporário) e não precisam de na
 | **v25** | Correção: o **card "Lixeira" mostrava sempre vazio** — o front não buscava os `status='excluido'` (a listagem padrão da API os exclui), deixando os botões **Restaurar/Apagar def.** inalcançáveis. Agora o admin carrega a lixeira e o filtro "Todos" não mistura excluídos. Testes de navegador passam a rodar (`pytest --browser`). |
 | **v26** | **Gestão de usuários na interface** (antes só existia na API): botão 👥 no topo (só admin), com lista de usuários (badge admin/usuário, inativo) e formulário para **criar usuário não-admin** (nome, e-mail, senha ≥ 8) na própria tela; permite alternar admin/ativo. Correção de CSS: a regra global `[hidden]` faz o atributo vencer o `display` dos componentes — antes o **card "Lixeira" aparecia para não-admins** (`#stat-lix` com `.stat { display:flex }`). Teste de navegador novo (`test_cria_usuario_nao_admin_pelo_modal`). |
 | **v27** | **Blindagem (self-admin-guard)**: o chip "Remover admin" não fica ativo na **própria linha** do usuário logado — evita o admin se rebaixar sozinho e ficar sem nenhum administrador. Teste de navegador verifica que a linha do próprio admin não tem o botão de alternar admin. |
+| **v28** | **Admin único**: o sistema passa a ter **uma só conta de acesso** — `admin@admin.com` (configurável por `ADMIN_EMAIL`/`ADMIN_NOME`/`ADMIN_SENHA`). O backend cria/repara essa conta no boot (`garantir_admin()`) e **apaga as contas extras** (e suas sessões) — bancos da era multi-usuário migram sozinhos. **Removidos**: `POST /api/auth/registrar`, `GET /api/usuarios`, `PATCH /api/usuarios/{uid}`, o botão/modal 👥 *Usuários* e o `UsuarioCreate`. O login no front agora pede **só a senha** (o e-mail do admin aparece fixo na tela, preenchido por `GET /api/auth/estado` → `{admin, email}`); **todas** as rotas de dados exigem token (não há mais modo anônimo). Worker da Cloudflare espelhado (`garantirAdmin(env)`). Documentação (`README`, `DOCUMENTACAO`, `COMO_RODAR`) atualizada para o modo de conta única. |
 
 ---
 
@@ -546,12 +582,13 @@ Dois scripts sobem o servidor sozinhos (banco temporário) e não precisam de na
 
 | Sintoma | Causa provável / solução |
 |---|---|
-| HTML/JS antigo no navegador | Headers `no-store`/`?v=27` já cobrem; force recarga (Ctrl+F5). Confira `window.APP_V`. |
-| Login não entra | Senha errada, usuário **inativo**, ou rate-limit (`429`) — espere a janela. |
+| HTML/JS antigo no navegador | Headers `no-store`/`?v=28` já cobrem; force recarga (Ctrl+F5). Confira `window.APP_V`. |
+| Login não entra | Senha errada, conta ainda não criada (o servidor cria no boot) ou rate-limit (`429`) — espere a janela. |
 | `401` em rotas de dados | Token ausente/expirado ou sessão revogada; faça login de novo. |
-| `403` no restaurar/purgar/backup/usuarios | Recurso exclusivo de **admin**. |
+| `403` no restaurar/purgar/backup | Recurso exclusivo de **admin**. |
 | `409` ao editar | O código informado já pertence a outro envio. |
 | `422` ao criar/editar | Código fora do padrão, destinatário vazio, sem e-mail nem celular, ou senha < 8. |
+| Não encontro a senha do admin | O padrão é `admin12345`; troque com `ADMIN_SENHA` **antes** do 1º boot ou use "Trocar senha" depois de entrar. |
 | E-mail não sai | `SMTP_USER`/`SMTP_PASS` ausentes ou senha não é "senha de app" do Gmail. |
 | "Rastrear" só abre os Correios | Falta `RASTREIO_API_KEY`. |
 | `503`/`502` no rastrear | `503` = sem chave; `502` = provedor fora do ar (se havia cache, ele é mostrado). |
