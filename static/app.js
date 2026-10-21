@@ -23,7 +23,7 @@ function _esperaBackoff(){
 function _backendVoltou(){ _tentativasOff = 0; _semBackendDesde = 0; }
 const $ = id => document.getElementById(id);
 const state = { envios: [], db: {}, token: localStorage.getItem('rf_token')||'', adminEmail: 'admin@admin.com' };
-const APP_V = '29'; /* versão do front: se o servidor tiver outra, a página se recarrega sozinha */
+const APP_V = '30'; /* versão do front: se o servidor tiver outra, a página se recarrega sozinha */
 window.APP_V = APP_V; /* facilita conferir a versão no console: window.APP_V */
 /* ===== erros visíveis: nada de falhar em silêncio =====
    Se qualquer coisa quebrar, o problema aparece na barra vermelha do rodapé

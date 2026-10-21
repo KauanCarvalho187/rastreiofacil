@@ -15,11 +15,12 @@
 - **Arquivos principais**: `main.py` (rotas), `db.py` (acesso/diagrama), `validacao.py` (validações), `static/app.js`, `static/index.html`, `static/styles.css`, `cloudflare/worker.js` (espelho do backend).
 - **Acesso único (v28)**: existe **uma só conta** — `admin@admin.com` (senha inicial `admin12345`). Ela é criada sozinha no boot do servidor; contas antigas são apagadas. **Não existe** cadastro de usuários, nem `POST /api/auth/registrar`, nem `GET /api/usuarios`. O login no front pede **só a senha**.
 - **Front leve (v29)**: a lib do Excel (`static/libs/xlsx.full.min.js`, 861 KB) é carregada **sob demanda** (`carregarXLSX()`) — não pode voltar a ser `<script>` bloqueante no `index.html`. A lista renderiza em blocos de 120 (`PAGINA_LINHAS`) com o botão "Carregar mais".
+- **Área de rolagem sem corte (v30)**: no desktop, `.lista-scroll` não pode ter `max-height` limitado a `92vh` (a barra ficava cortada embaixo da tela). Ela usa `contain: size` e ocupa a coluna inteira (957px). No celular (≤860px) o limite é `60vh`.
 - **Suítes existentes** (todas devem estar verdes no fim):
 
   | Suíte | Comando | Esperado hoje |
   |---|---|---|
-  | análise estática/regressões | `python test_analise_erros.py` | `RESULTADO: TUDO OK` (91 checks) |
+  | análise estática/regressões | `python test_analise_erros.py` | `RESULTADO: TUDO OK` (95 checks) |
   | API in-process (pytest) | `pytest -q` | todos os testes verdes (browser é pulado sem `--browser`) |
   | UI no navegador (Selenium/Chrome) | `pytest --browser` | todos os testes verdes (precisa de Chrome) |
   | E2E da API | `python teste_operacional.py` | fluxo completo verde |

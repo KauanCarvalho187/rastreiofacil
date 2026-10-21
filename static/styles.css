@@ -207,10 +207,15 @@ body {
   min-height: 0;
 }
 
+/* v30: área de rolagem da lista (onde ficam os rastreios cadastrados).
+   Antes o max-height era min(92vh, 1150px): a barra de rolagem parava nos 92vh
+   e ainda ficava cortada embaixo da tela. No desktop (ver @media min-width 861px)
+   o limite foi removido: a área desce a página inteira, junto com a coluna. */
 .lista-scroll {
   flex: 1 1 auto;
-  min-height: 0;
+  min-height: 260px;
   overflow-y: auto;
+  max-height: 60vh;
   padding-right: 10px;
   scrollbar-width: thin;
   scrollbar-color: #3b3c47 transparent;
@@ -328,14 +333,6 @@ body {
 
 .list-col h2 {
   margin-bottom: 12px;
-}
-
-.lista-scroll {
-  overflow-y: auto;
-  max-height: min(92vh, 1150px);
-  padding-right: 10px;
-  scrollbar-width: thin;
-  scrollbar-color: #3b3c47 transparent;
 }
 
 .lista-scroll::-webkit-scrollbar {
@@ -752,6 +749,21 @@ input.invalid {
   gap: 6px;
   flex-wrap: wrap;
   margin-top: 8px;
+}
+
+/* v30: no desktop a área de rolagem dos rastreios desce a página INTEIRA:
+   com `contain: size` o tamanho dela não depende do conteúdo, então ela
+   ocupa TODA a altura da coluna da lista (a mesma do formulário) e rola por
+   dentro. Antes parava nos 92vh (854px) e ainda ficava cortada embaixo.
+   No celular (abaixo) a coluna é única, então ela mantém o limite de 60vh. */
+@media (min-width: 861px) {
+  .lista-scroll {
+    max-height: none;
+    min-height: 0;
+    /* o tamanho da área não é mais dado pelo conteúdo (43+ itens): ela preenche
+       a coluna inteira e o excesso passa a rolar por dentro */
+    contain: size;
+  }
 }
 
 @media (max-width: 860px) {

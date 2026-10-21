@@ -1,7 +1,7 @@
 # Rastreio Fácil — Como rodar
 
 > Documentação técnica completa (arquitetura, API, banco, deploy): **`DOCUMENTACAO.md`**.
-> Versão do front/back: **29**.
+> Versão do front/back: **30**.
 
 Escolha o cenário:
 
@@ -27,7 +27,7 @@ Sem backend, cadastro e importação ficam salvos **no navegador** (`localStorag
 sozinhos quando o Python estiver instalado. Para parar, feche a janela *Rastreio-Facil-Servidor-Local*.
 
 > Erros de JavaScript aparecem numa **barra vermelha no rodapé**. A versão do front aparece no
-> console como `window.APP_V` e precisa bater com `APP_VERSAO` do `main.py` (hoje `29`).
+> console como `window.APP_V` e precisa bater com `APP_VERSAO` do `main.py` (hoje `30`).
 
 > Sem backend (só a interface), a tela abre direto — mas, como o sistema tem um único admin,
 > o **modo local** grava no navegador e sincroniza com o servidor assim que ele subir.
@@ -168,7 +168,7 @@ A suíte `pytest` cobre o mesmo caminho pela API (sem abrir navegador) e
 
 | Sintoma | O que fazer |
 |---|---|
-| Página com HTML/JS antigo | A versão (`?v=29`) e o header `no-store` resolvem; force recarga (Ctrl+F5). |
+| Página com HTML/JS antigo | A versão (`?v=30`) e o header `no-store` resolvem; force recarga (Ctrl+F5). |
 | "Biblioteca Excel não carregou" ao exportar | A lib do Excel é baixada **sob demanda** (v29): na 1ª vez leva alguns segundos. Sem internet, o export em `.xlsx` não funciona — use **Exportar CSV**, que é nativo e não precisa de lib. |
 | `porta 3000 já em uso` | Feche a outra janela do servidor ou `Get-Process python \| Stop-Process -Force`. |
 | Erro ao mover a pasta do projeto | A `.venv` quebra de caminho; apague a `.venv` e recrie (`iniciar-sistema.bat` cobre o Python do sistema). |

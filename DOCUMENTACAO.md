@@ -4,7 +4,7 @@
 > Backend **FastAPI (Python)** + Frontend **HTML/CSS/JS vanilla** (sem build) +
 > Banco **SQLite** (local), **Postgres** (`DATABASE_URL`) ou **Cloudflare D1**.
 >
-> **Versão do front/back: `29`** (campo `APP_VERSAO` no `main.py` e `APP_V` no `static/app.js`).
+> **Versão do front/back: `30`** (campo `APP_VERSAO` no `main.py` e `APP_V` no `static/app.js`).
 > Documentação revisada em **21/10/2026**, conferida linha a linha contra
 > `main.py`, `db.py`, `validacao.py`, `rastreio.py`, `static/app.js`, `static/index.html`,
 > `cloudflare/worker.js` e os testes.
@@ -172,8 +172,8 @@ compatibilidade com Live Server (`:5500`–`:5503`) e `file://`. **Em produção
 `CORS_ORIGINS=https://seu-dominio.com`.
 
 ### 5.3 Versionamento do front (anti "aba velha")
-O `app.js` guarda `APP_V = '29'` e pergunta `GET /api/versao`. Se o servidor responder outra
-versão, o front se recarrega sozinho. O `index.html` referencia os assets com `?v=29`.
+O `app.js` guarda `APP_V = '30'` e pergunta `GET /api/versao`. Se o servidor responder outra
+versão, o front se recarrega sozinho. O `index.html` referencia os assets com `?v=30`.
 **Ao publicar mudanças no front, suba a versão nos dois lugares** (`main.py` → `APP_VERSAO`
 e `static/app.js` → `APP_V`, além do `?v=` no `index.html` e no `cloudflare/worker.js`).
 
@@ -278,7 +278,7 @@ Erros do FastAPI vêm como `{"detail": "mensagem"}`.
 |---|---|---|
 | GET | `/api/health` | `{ok, db:{configured,connected,driver,url_safe}, smtp, rastreio}` |
 | GET | `/api/db-status` | Status detalhado do banco |
-| GET | `/api/versao` | `{versao}` (hoje `"29"`) |
+| GET | `/api/versao` | `{versao}` (hoje `"30"`) |
 | GET | `/api/auth/estado` | `{admin, email}` — `admin` = o token do header é de admin; `email` = login do admin (`admin@admin.com`) |
 
 ### 8.2 Autenticação
@@ -429,6 +429,33 @@ paga** os 861 KB.
 - A lista é renderizada em **blocos de 120** (`PAGINA_LINHAS`) com o botão **"Carregar mais"**.
 - O CSS usa `content-visibility: auto` + `contain-intrinsic-size` em `.item`: o browser pula o
   layout/paint das linhas fora da tela.
+
+### 9.3 Área de rolagem dos rastreios (v30)
+
+A lista da direita (onde ficam os rastreios cadastrados) tem a própria barra de rolagem.
+Até a v29 ela era limitada a `min(92vh, 1150px)`, o que deixava a barra **cortada embaixo**
+da tela (era preciso rolar a página para alcançar o fim dela).
+
+Na **v30** o limite desktop foi removido e a área passou a ocupar **a coluna inteira**:
+
+```css
+@media (min-width: 861px) {
+  .lista-scroll { max-height: none; min-height: 0; contain: size; }
+}
+```
+
+O `contain: size` é o truque: ele faz o tamanho da área **não depender do conteúdo**
+(são 43+ itens = 6.259px). Assim ela preenche a coluna da lista (a mesma altura do
+formulário, 989px) e o excesso passa a rolar **por dentro** dela.
+
+| Janela | Altura da área de rolagem (v29) | (v30) |
+|---|---|---|
+| 1920×1080 | 854px | **957px** |
+| 1536×864 | 655px | **957px** |
+| 1366×768 | 567px | **957px** |
+
+> No celular (≤860px) a coluna vira uma só e a área mantém o limite de `60vh`
+> (senão a página ficaria com 6.000px de rolagem).
 
 ---
 
@@ -609,6 +636,7 @@ cobrindo login, cadastro e lixeira na interface.
 | **v27** | **Blindagem (self-admin-guard)**: o chip "Remover admin" não fica ativo na **própria linha** do usuário logado — evita o admin se rebaixar sozinho e ficar sem nenhum administrador. Teste de navegador verifica que a linha do próprio admin não tem o botão de alternar admin. |
 | **v28** | **Admin único**: o sistema passa a ter **uma só conta de acesso** — `admin@admin.com` (configurável por `ADMIN_EMAIL`/`ADMIN_NOME`/`ADMIN_SENHA`). O backend cria/repara essa conta no boot (`garantir_admin()`) e **apaga as contas extras** (e suas sessões) — bancos da era multi-usuário migram sozinhos. **Removidos**: `POST /api/auth/registrar`, `GET /api/usuarios`, `PATCH /api/usuarios/{uid}`, o botão/modal 👥 *Usuários* e o `UsuarioCreate`. O login no front agora pede **só a senha** (o e-mail do admin aparece fixo na tela, preenchido por `GET /api/auth/estado` → `{admin, email}`); **todas** as rotas de dados exigem token (não há mais modo anônimo). Worker da Cloudflare espelhado (`garantirAdmin(env)`). Documentação (`README`, `DOCUMENTACAO`, `COMO_RODAR`) atualizada para o modo de conta única. |
 
+| **v30** | **A área de rolagem dos rastreios desce a página inteira.** A lista da direita tinha a barra limitada a `min(92vh, 1150px)` e ela ficava **cortada embaixo** da tela (era preciso rolar a página para alcançar o fim). No desktop o limite foi removido e a área agora ocupa a coluna inteira (`contain: size` faz o tamanho não depender dos 6.259px de conteúdo): **957px em qualquer resolução** (era 854px em 1080p, 655px em 864p e 567px em 768p). No celular segue o limite de `60vh`. Também foi removida a regra `.lista-scroll` duplicada no CSS. |
 | **v29** | **Performance: o site ficou 13× mais leve.** A lib do Excel (`xlsx.full.min.js`, SheetJS 0.18.5, **861 KB**) saiu do `<script>` bloqueante do `index.html` e passa a ser baixada **sob demanda** (`carregarXLSX()`), só ao exportar/importar `.xlsx` → payload inicial de **957 KB → 71 KB (−93%)**. `filtrados()` agora faz **uma única passagem** devolvendo a lista e os contadores dos cards (antes eram 5 `.filter()` por render); o total da lixeira reaproveita o `total` da página já carregada (elimina 1 requisição por `load()`); a lista renderiza em **blocos de 120** com o botão **"Carregar mais"**; o CSS aplica `content-visibility: auto` em `.item` (rolagem leve sem virtualização em JS). Teste de navegador novo garante que a lib **não** é baixada no boot. |
 
 ---
@@ -617,7 +645,7 @@ cobrindo login, cadastro e lixeira na interface.
 
 | Sintoma | Causa provável / solução |
 |---|---|
-| HTML/JS antigo no navegador | Headers `no-store`/`?v=29` já cobrem; force recarga (Ctrl+F5). Confira `window.APP_V`. |
+| HTML/JS antigo no navegador | Headers `no-store`/`?v=30` já cobrem; force recarga (Ctrl+F5). Confira `window.APP_V`. |
 | Login não entra | Senha errada, conta ainda não criada (o servidor cria no boot) ou rate-limit (`429`) — espere a janela. |
 | `401` em rotas de dados | Token ausente/expirado ou sessão revogada; faça login de novo. |
 | `403` no restaurar/purgar/backup | Recurso exclusivo de **admin**. |

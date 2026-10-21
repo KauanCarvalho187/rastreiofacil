@@ -104,8 +104,8 @@ check("lista: busca todas as paginas do servidor (nao trava em 200)",
 check("rota /api/notificacoes/massa definida uma unica vez (sem duplicata morta)",
       main.count('@app.post("/api/notificacoes/massa")') == 1)
 # melhorias v22 (regressoes — nao remover)
-check("v29: versao front/back em 29 (abas antigas recarregam)",
-      'APP_VERSAO = "29"' in main and "APP_V = '29'" in js and "?v=29" in html)
+check("v30: versao front/back em 30 (abas antigas recarregam)",
+      'APP_VERSAO = "30"' in main and "APP_V = '30'" in js and "?v=30" in html)
 check("v28: admin unico — sem tela de usuarios no front",
       "btn-usuarios" not in html and "modal-usuarios" not in html
       and "btn-usuarios" not in js and "modal-usuarios" not in js)
@@ -136,6 +136,20 @@ check("v29: o total da lixeira vem da pagina ja carregada (sem request extra)",
       and "state.lixeiraTotal = dl.total || 0" in js)
 check("v29: CSS usa content-visibility nas linhas (rolagem leve)",
       "content-visibility: auto" in open(os.path.join(BASE, "static", "styles.css"), encoding="utf-8").read())
+# v30: a area de rolagem da lista desce ate o rodape da janela (sem rolagem dupla)
+_css = open(os.path.join(BASE, "static", "styles.css"), encoding="utf-8").read()
+check("v30: a area de rolagem da lista desce a pagina inteira (coluna toda)",
+      "max-height: 60vh" in _css
+      and "contain: size" in _css
+      and "min-height: 260px" in _css)
+check("v30: no desktop a area nao tem mais limite de altura (92vh)",
+      "@media (min-width: 861px)" in _css
+      and "max-height: none" in _css
+      and "contain: size" in _css)
+check("v30: a regra .lista-scroll NAO esta duplicada no CSS",
+      _css.count(".lista-scroll {") == 3)   # base + @media desktop + @media mobile
+check("v30: o max-height antigo (92vh) nao volta (barra cortava a tela)",
+      "max-height: min(92vh, 1150px)" not in _css)
 worker = open(os.path.join(BASE, "cloudflare", "worker.js"), encoding="utf-8").read()
 check("v28: Worker da Cloudflare tambem e admin unico",
       "garantirAdmin(env)" in worker and "admin@admin.com" in worker
@@ -145,8 +159,8 @@ check("v28: Worker da Cloudflare tambem e admin unico",
 check("v23: rastreio automatico — rota, cache e modal",
       '@app.post("/api/envios/{envio_id}/rastrear")' in main and "_cache_valido(cache)" in main
       and 'id="modal-rt"' in html and "+'/rastrear'" in js)
-check("v29: Worker da Cloudflare na mesma versao que o main.py",
-      "const APP_VERSAO = '29'" in worker)
+check("v30: Worker da Cloudflare na mesma versao que o main.py",
+      "const APP_VERSAO = '30'" in worker)
 # correcao v25: a lixeira era inalcancavel no front (a listagem padrao da API exclui
 # status='excluido'); agora o admin carrega a lixeira e "Todos" nao mistura excluidos.
 check("v25: admin carrega a lixeira e 'Todos' oculta excluidos",

@@ -9,7 +9,7 @@ consulta automática de eventos.
 - Banco **SQLite** (local), **Postgres** (`DATABASE_URL`) ou **Cloudflare D1**
 - Roda também como **Cloudflare Worker** (`cloudflare/worker.js`, mesmas rotas `/api`)
 
-> Versão atual do front/back: **29**
+> Versão atual do front/back: **30**
 
 ## Recursos
 
@@ -24,6 +24,8 @@ consulta automática de eventos.
 - **Anti-aba-velha**: o front se recarrega quando o servidor é atualizado.
 - **Site leve**: payload inicial de **71 KB** — a lib do Excel (861 KB) só é baixada quando
   você realmente usa "Exportar Excel".
+- **Lista sem barra cortada**: a área de rolagem dos rastreios ocupa a coluna inteira
+  (957px), do título "Envios" até o fim da página.
 
 ## Como rodar
 
