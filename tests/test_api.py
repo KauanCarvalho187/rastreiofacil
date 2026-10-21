@@ -33,7 +33,7 @@ def test_health(client):
 
 
 def test_versao(client):
-    assert client.get("/api/versao").json()["versao"] == "30"
+    assert client.get("/api/versao").json()["versao"] == "31"
 
 
 def test_db_status(client, auth):
@@ -110,6 +110,41 @@ def test_trocar_senha(client, auth):
 
 def test_token_invalido_401(client, auth):
     assert client.get("/api/envios", headers={"Authorization": "Bearer nao_existe"}).status_code == 401
+
+
+# ------------------------------------------------------- seguranca v31
+
+def test_trocar_senha_invalida_outras_sessoes(client, auth):
+    """v31: trocar a senha encerra as outras sessoes (a atual continua valendo)."""
+    # segunda sessao (outro dispositivo)
+    t2 = client.post("/api/auth/login", json={"email": "admin@admin.com", "senha": "admin12345"}).json()["token"]
+    h2 = {"Authorization": "Bearer " + t2}
+    assert client.get("/api/envios", headers=h2).status_code == 200
+    # troca a senha usando a sessao do fixture
+    r = client.post("/api/auth/trocar-senha",
+                    json={"senha_atual": "admin12345", "senha_nova": "novasenha1"}, headers=auth["H"])
+    assert r.status_code == 200
+    # a sessao antiga foi encerrada...
+    assert client.get("/api/envios", headers=h2).status_code == 401
+    # ...e a sessao atual continua valendo
+    assert client.get("/api/envios", headers=auth["H"]).status_code == 200
+
+
+def test_cors_nao_libera_origem_arbitraria(client, auth):
+    """v31: o CORS nao responde mais com '*' para qualquer origem."""
+    r = client.get("/api/versao", headers={"Origin": "https://site-malicioso.example"})
+    assert "access-control-allow-origin" not in r.headers
+    # origem local de desenvolvimento continua liberada
+    r = client.get("/api/versao", headers={"Origin": "http://localhost:3000"})
+    assert r.headers.get("access-control-allow-origin") == "http://localhost:3000"
+
+
+def test_csp_no_header(client):
+    """v31: a resposta traz Content-Security-Policy restritiva."""
+    csp = client.get("/").headers.get("content-security-policy", "")
+    assert "default-src 'self'" in csp
+    assert "script-src 'self'" in csp
+    assert "frame-ancestors 'self'" in csp
 
 
 # ------------------------------------------------------- admin unico (v28)

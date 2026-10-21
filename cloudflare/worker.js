@@ -4,7 +4,7 @@
    Mudou uma regra no main.py / rastreio.py? Mude aqui tambem. */
 import { connect } from 'cloudflare:sockets';
 
-const APP_VERSAO = '30';
+const APP_VERSAO = '31';
 const RASTREIO_URL_PADRAO = 'https://api-labs.wonca.com.br/wonca.labs.v1.LabsService/Track';
 const REGEX_CODIGO = /^[A-Za-z]{2}\d{9}BR$/;
 const REGEX_EMAIL = /^[^@\s]+@[^@\s]+\.[^@\s]+$/;
@@ -14,8 +14,23 @@ const E_PACK = '\u{1F4E6}', E_WAVE = '\u{1F44B}', E_LIST = '\u{1F4CB}', E_LINK =
 class Http extends Error {
   constructor(status, detail){ super(detail); this.status = status; this.detail = detail; }
 }
+
+/* v31: cabecalhos de seguranca (os mesmos do main.py) — inclusive nos assets.
+   O front nao usa script inline e usa style="" em alguns campos -> 'unsafe-inline' em style. */
+const CSP = "default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; "
+  + "img-src 'self' data:; font-src 'self' data:; "
+  + "connect-src 'self' http://localhost:* http://127.0.0.1:*; "
+  + "object-src 'none'; base-uri 'self'; form-action 'self'; frame-ancestors 'self'";
+const headersSeguranca = () => ({
+  'Content-Security-Policy': CSP,
+  'X-Content-Type-Options': 'nosniff',
+  'X-Frame-Options': 'SAMEORIGIN',
+  'Referrer-Policy': 'no-referrer',
+  'Permissions-Policy': 'geolocation=(), microphone=(), camera=()',
+  'Strict-Transport-Security': 'max-age=31536000; includeSubDomains',
+});
 const json = (dados, status = 200, headers = {}) =>
-  new Response(JSON.stringify(dados), { status, headers: { 'Content-Type': 'application/json; charset=utf-8', ...headers } });
+  new Response(JSON.stringify(dados), { status, headers: { 'Content-Type': 'application/json; charset=utf-8', ...headersSeguranca(), ...headers } });
 
 /* ---------- banco (D1) ---------- */
 const fetchAll = async (env, sql, args = []) => (await env.DB.prepare(sql).bind(...args).all()).results || [];
@@ -84,15 +99,24 @@ async function verificarSenha(senha, armazenada){
 /* v28: admin unico — uma conta so (ADMIN_EMAIL, padrao admin@admin.com). */
 const adminEmail = env => String(env.ADMIN_EMAIL || 'admin@admin.com').trim().toLowerCase();
 const adminNome = env => String(env.ADMIN_NOME || 'Admin').trim() || 'Admin';
-const adminSenha = env => String(env.ADMIN_SENHA || 'admin12345');
+/* v31: SEM senha padrao. A senha do admin tem que vir do segredo ADMIN_SENHA
+   (wrangler secret put ADMIN_SENHA). Sem ele, o Worker NAO cria a conta — assim
+   ninguem entra com a senha publica que estava no README/.env.example. */
+const adminSenha = env => String(env.ADMIN_SENHA || '').trim();
 async function garantirAdmin(env){
   try {
     const email = adminEmail(env);
     const rows = await fetchAll(env, 'SELECT id, email, admin, ativo FROM usuarios');
     const alvo = rows.find(u => String(u.email || '').toLowerCase() === email);
     if (!alvo) {
+      const senha = adminSenha(env);
+      if (!senha) {
+        console.error('[AUTH] ERRO: segredo ADMIN_SENHA nao definido — o admin "' + email + '" NAO foi criado. '
+          + 'Rode: npx wrangler secret put ADMIN_SENHA');
+        return;
+      }
       await execute(env, 'INSERT INTO usuarios (nome,email,senha_hash,admin,ativo) VALUES (?,?,?,1,1)',
-        [adminNome(env), email, await hashSenha(adminSenha(env))]);
+        [adminNome(env), email, await hashSenha(senha)]);
     } else if (!alvo.admin || !alvo.ativo) {
       await execute(env, 'UPDATE usuarios SET admin=1, ativo=1 WHERE id=?', [alvo.id]);
     }
@@ -101,7 +125,7 @@ async function garantirAdmin(env){
       await execute(env, 'DELETE FROM sessoes WHERE usuario_id <> (SELECT id FROM usuarios WHERE email=?)', [email]);
       await execute(env, 'DELETE FROM usuarios WHERE email <> ?', [email]);
     }
-  } catch (e) { /* banco ainda sem schema: segue sem admin automatico */ }
+  } catch (e) { console.error('[AUTH] nao foi possivel garantir o admin:', e && e.message || e); }
 }
 function bearer(req){
   const a = req.headers.get('Authorization') || '';
@@ -631,7 +655,9 @@ rota('POST', '/api/auth/trocar-senha', async (env, req) => {
   if (!row || !(await verificarSenha(item.senha_atual, row.senha_hash))) throw new Http(401, 'Senha atual incorreta');
   if (item.senha_nova.length < 8) throw new Http(422, 'Senha muito curta (minimo 8)');
   await execute(env, 'UPDATE usuarios SET senha_hash = ? WHERE id = ?', [await hashSenha(item.senha_nova), usuario.id]);
-  return { message: 'Senha alterada' };
+  /* v31: derruba as OUTRAS sessoes (a atual continua valendo) — igual ao main.py */
+  const [n] = await execute(env, 'DELETE FROM sessoes WHERE usuario_id = ? AND token <> ?', [usuario.id, bearer(req)]);
+  return { message: n ? `Senha alterada — ${n} sessao(oes) antiga(s) encerrada(s)` : 'Senha alterada' };
 });
 
 rota('GET', '/api/estatisticas', async (env, req) => {
@@ -652,20 +678,38 @@ rota('GET', '/api/backup', async (env, req) => {
 
 /* ---------- arquivos estaticos: a pasta static/ e publicada na raiz dos assets ---------- */
 async function estatico(env, req, caminho, cache){
-  const r = await env.ASSETS.fetch(new Request(new URL(caminho, req.url), { method: 'GET', headers: req.headers }));
+  const url = new URL(caminho, req.url);
+  /* v31: repassa ao asset server SO os headers de cache/condicional.
+     Antes repassava todos (inclusive Authorization e Cookie do cliente). */
+  const h = {};
+  for (const k of ['Range', 'If-None-Match', 'If-Modified-Since'])
+    if (req.headers.get(k)) h[k] = req.headers.get(k);
+  const r = await env.ASSETS.fetch(new Request(url, { method: 'GET', headers: h }));
   const resp = new Response(r.body, r);
   if (cache) resp.headers.set('Cache-Control', cache);
+  for (const [k, v] of Object.entries(headersSeguranca())) resp.headers.set(k, v);
   return resp;
 }
 
+/* v31: CORS nao liberado para tudo. Sem CORS_ORIGINS no ambiente vale a lista
+   local de desenvolvimento (mesma do main.py); em producao defina as origens do app. */
+const CORS_PADRAO_LOCAL = (() => {
+  const l = ['http://localhost:3000', 'http://127.0.0.1:3000', 'http://localhost:8080', 'http://127.0.0.1:8080'];
+  for (const p of ['5500', '5501', '5502', '5503']) l.push(`http://localhost:${p}`, `http://127.0.0.1:${p}`);
+  l.push('null');
+  return l;
+})();
+
 function cors(env, req){
   const origens = String(env.CORS_ORIGINS || '').split(',').map(o => o.trim()).filter(Boolean);
+  const lista = origens.length ? origens : CORS_PADRAO_LOCAL;
   const origem = req.headers.get('Origin');
-  if (!origem || !(origens.includes('*') || origens.includes(origem))) return {};
+  if (!origem || !(lista.includes('*') || lista.includes(origem))) return {};
   return {
-    'Access-Control-Allow-Origin': origens.includes('*') ? '*' : origem,
+    'Access-Control-Allow-Origin': lista.includes('*') ? '*' : origem,
     'Access-Control-Allow-Methods': 'GET,POST,PUT,PATCH,DELETE,OPTIONS',
     'Access-Control-Allow-Headers': 'Content-Type,Authorization',
+    'Access-Control-Max-Age': '86400',
     Vary: 'Origin',
   };
 }

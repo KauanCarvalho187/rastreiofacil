@@ -9,7 +9,7 @@ consulta automática de eventos.
 - Banco **SQLite** (local), **Postgres** (`DATABASE_URL`) ou **Cloudflare D1**
 - Roda também como **Cloudflare Worker** (`cloudflare/worker.js`, mesmas rotas `/api`)
 
-> Versão atual do front/back: **30**
+> Versão atual do front/back: **31**
 
 ## Recursos
 
@@ -19,7 +19,8 @@ consulta automática de eventos.
 - **Lixeira** (exclusão reversível) e **backup** do banco (admin).
 - **Histórico** de mudanças de status por envio.
 - **Autenticação** com **uma única conta** (`admin@admin.com`), sessões revogáveis, senha com
-  PBKDF2 e rate-limit de login.
+  PBKDF2 e rate-limit de login. Trocar a senha **encerra as outras sessões** abertas.
+- **CORS restrito** (não liberada para `*`), **CSP** e cabeçalhos de segurança em todas as respostas.
 - **Modo offline** no navegador (`localStorage`) quando não há backend.
 - **Anti-aba-velha**: o front se recarrega quando o servidor é atualizado.
 - **Site leve**: payload inicial de **71 KB** — a lib do Excel (861 KB) só é baixada quando
@@ -38,8 +39,10 @@ Guia completo em **[`COMO_RODAR.md`](COMO_RODAR.md)**.
 - **Nuvem:** `uvicorn main:app --host 0.0.0.0 --port $PORT` com `DATABASE_URL`
 
 Primeiro acesso: clique em **👤** e entre com a senha do admin. A conta **admin@admin.com** é
-criada sozinha no primeiro boot do servidor; a senha inicial vem de `ADMIN_SENHA`
-(padrão `admin12345` — defina no `.env` ou troque depois de entrar). Não existem outros logins.
+criada sozinha no primeiro boot do servidor; a senha inicial vem de `ADMIN_SENHA`.
+Em **desenvolvimento local** (SQLite) o padrão é `admin12345` — **em produção** (Postgres ou
+Cloudflare) a senha é **obrigatória**: sem `ADMIN_SENHA` o admin **não é criado**
+(no Cloudflare: `npx wrangler secret put ADMIN_SENHA`). Não existem outros logins.
 
 ## Testes
 
@@ -58,6 +61,7 @@ O CI (`.github/workflows/ci.yml`) roda pytest + verificador estático + navegado
 
 - **[`DOCUMENTACAO.md`](DOCUMENTACAO.md)** — arquitetura, banco, API completa, deploy, troubleshooting.
 - **[`COMO_RODAR.md`](COMO_RODAR.md)** — passo a passo de execução.
+- **[`AUDITORIA.md`](AUDITORIA.md)** — backlog de melhorias (segurança, a11y, CI, deps) com o status de cada item.
 - **[`PROMPT-VERIFICACAO-PROFUNDA.md`](PROMPT-VERIFICACAO-PROFUNDA.md)** — roteiro de auditoria profunda e autorreparo.
 
 ## Estrutura (resumo)

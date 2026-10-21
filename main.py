@@ -38,9 +38,18 @@ SMTP_PASS = os.getenv("SMTP_PASS", "")
 SENDER_NAME = os.getenv("SENDER_NAME", "Rastreio Facil")
 PORT = int(os.getenv("PORT", "3000"))
 SESSAO_DIAS = int(os.getenv("SESSAO_DIAS", "7"))
-# CORS restrito por env (melhoria): padrao "*" para nao quebrar Live Server/file://,
-# mas em producao defina CORS_ORIGINS=https://seu-dominio.com,https://app...
-CORS_ORIGINS = [o.strip() for o in os.getenv("CORS_ORIGINS", "*").split(",") if o.strip()]
+# v31: o CORS NAO vem mais liberado para tudo ("*"). O padrao agora e uma lista
+# restrita ao ambiente local (app :3000/:8080, Live Server :5500-5503 e file://),
+# de modo que nenhum site de terceiros consiga chamar a API.
+# Em producao defina CORS_ORIGINS=https://seu-dominio.com,https://app.seu-dominio.com
+_CORS_ORIGENS_PADRAO = [
+    "http://localhost:3000", "http://127.0.0.1:3000",
+    "http://localhost:8080", "http://127.0.0.1:8080",
+]
+for _p in ("5500", "5501", "5502", "5503"):
+    _CORS_ORIGENS_PADRAO += [f"http://localhost:{_p}", f"http://127.0.0.1:{_p}"]
+_CORS_ORIGENS_PADRAO.append("null")  # paginas abertas direto do disco (file://)
+CORS_ORIGINS = [o.strip() for o in os.getenv("CORS_ORIGINS", "").split(",") if o.strip()] or list(_CORS_ORIGENS_PADRAO)
 # Rate-limit simples em memoria para login (melhoria anti brute-force)
 _LOGIN_TENTATIVAS: dict = {}
 LOGIN_MAX_TENT = int(os.getenv("LOGIN_MAX_TENT", "10"))
@@ -49,7 +58,11 @@ LOGIN_JANELA_SEG = int(os.getenv("LOGIN_JANELA_SEG", "300"))
 # A senha inicial vem do env ADMIN_SENHA (troque no 1o acesso ou defina no .env).
 ADMIN_EMAIL = (os.getenv("ADMIN_EMAIL") or "admin@admin.com").strip().lower()
 ADMIN_NOME = (os.getenv("ADMIN_NOME") or "Admin").strip() or "Admin"
-ADMIN_SENHA = os.getenv("ADMIN_SENHA") or "admin12345"
+# v31: a senha padrao "admin12345" so vale para DESENVOLVIMENTO LOCAL (SQLite).
+# Em producao (Postgres) ela e proibida: sem ADMIN_SENHA no ambiente o admin
+# NAO e criado — assim ninguem entra com a senha que estava escrita no README.
+ADMIN_SENHA = os.getenv("ADMIN_SENHA") or ""
+ADMIN_SENHA_PADRAO_LOCAL = "admin12345"
 
 def _login_bloqueado(ip: str) -> bool:
     agora = time.time()
@@ -155,10 +168,22 @@ async def garantir_admin() -> None:
     try:
         row = await fetch_one("SELECT id, admin, ativo FROM usuarios WHERE email = ?", (ADMIN_EMAIL,))
         if not row:
+            if ADMIN_SENHA:
+                senha_inicial = ADMIN_SENHA
+                aviso = " — troque a senha no 1o acesso"
+            elif USE_POSTGRES:
+                # producao: sem senha definida no ambiente NAO criamos conta com senha publica
+                print(f"[AUTH] ERRO: ADMIN_SENHA nao definido — o admin '{ADMIN_EMAIL}' NAO foi criado. "
+                      f"Defina ADMIN_SENHA no ambiente e reinicie o servidor.")
+                return
+            else:
+                # desenvolvimento local: senha padrao conhecida (documentada no README)
+                senha_inicial = ADMIN_SENHA_PADRAO_LOCAL
+                aviso = " com a senha padrao de desenvolvimento — troque no 1o acesso"
             await execute(
                 "INSERT INTO usuarios (nome,email,senha_hash,admin,ativo) VALUES (?,?,?,1,1)",
-                (ADMIN_NOME, ADMIN_EMAIL, hash_senha(ADMIN_SENHA)))
-            print(f"[AUTH] admin criado: {ADMIN_EMAIL} (senha inicial: {ADMIN_SENHA}) — troque a senha no 1o acesso")
+                (ADMIN_NOME, ADMIN_EMAIL, hash_senha(senha_inicial)))
+            print(f"[AUTH] admin criado: {ADMIN_EMAIL}{aviso}")
         elif not row.get("admin") or not row.get("ativo"):
             await execute("UPDATE usuarios SET admin=1, ativo=1 WHERE id = ?", (row["id"],))
         # remove as demais contas (modo admin unico) e as sessoes delas
@@ -262,6 +287,20 @@ app.add_middleware(CORSMiddleware, allow_origins=CORS_ORIGINS,
     allow_methods=["GET","POST","PUT","PATCH","DELETE","OPTIONS"],
     allow_headers=["Content-Type","Authorization"])
 
+# v31: Content-Security-Policy. O front nao usa script inline (o app.js e externo),
+# porem usa atributos style="" em alguns campos -> por isso 'unsafe-inline' em style.
+# connect-src libera apenas o proprio servidor e o backend local (Live Server :5500+).
+CSP = ("default-src 'self'; "
+       "script-src 'self'; "
+       "style-src 'self' 'unsafe-inline'; "
+       "img-src 'self' data:; "
+       "font-src 'self' data:; "
+       "connect-src 'self' http://localhost:* http://127.0.0.1:*; "
+       "object-src 'none'; "
+       "base-uri 'self'; "
+       "form-action 'self'; "
+       "frame-ancestors 'self'")
+
 @app.middleware("http")
 async def _cache(request: Request, call_next):
     resp = await call_next(request)
@@ -275,6 +314,10 @@ async def _cache(request: Request, call_next):
     resp.headers["X-Frame-Options"] = "SAMEORIGIN"
     resp.headers["Referrer-Policy"] = "no-referrer"
     resp.headers["Permissions-Policy"] = "geolocation=(), microphone=(), camera=()"
+    # v31: CSP + HSTS (HSTS so quando a conexao e HTTPS — em http:// local e ignorado)
+    resp.headers["Content-Security-Policy"] = CSP
+    if request.url.scheme == "https" or request.headers.get("x-forwarded-proto") == "https":
+        resp.headers["Strict-Transport-Security"] = "max-age=31536000; includeSubDomains"
     return resp
 
 @app.get("/api/health")
@@ -714,14 +757,24 @@ class TrocaSenhaItem(BaseModel):
     senha_nova: str
 
 @app.post("/api/auth/trocar-senha")
-async def trocar_senha(item: TrocaSenhaItem, usuario: dict = Depends(auth_usuario)):
+async def trocar_senha(item: TrocaSenhaItem, authorization: str = Header(None), usuario: dict = Depends(auth_usuario)):
     row = await fetch_one("SELECT * FROM usuarios WHERE id = ?", (usuario["id"],))
     if not row or not verificar_senha(item.senha_atual, row["senha_hash"]):
         raise HTTPException(401, "Senha atual incorreta")
     if len(item.senha_nova or "") < 8:
         raise HTTPException(422, "Senha muito curta (minimo 8)")
     await execute("UPDATE usuarios SET senha_hash = ? WHERE id = ?", (hash_senha(item.senha_nova), usuario["id"]))
-    return {"message": "Senha alterada"}
+    # v31: derruba as OUTRAS sessoes (a atual continua valendo). Antes, trocar a senha
+    # deixava tokens antigos funcionando — um token vazado continuava valendo.
+    token_atual = authorization[7:].strip() if authorization and authorization.startswith("Bearer ") else ""
+    try:
+        n, _ = await execute("DELETE FROM sessoes WHERE usuario_id = ? AND token <> ?", (usuario["id"], token_atual))
+    except Exception:
+        n = 0
+    msg = "Senha alterada"
+    if n:
+        msg += f" — {n} sessao(oes) antiga(s) encerrada(s)"
+    return {"message": msg}
 
 @app.get("/api/envios")
 async def listar_envios(usuario: dict = Depends(auth_usuario),
@@ -764,7 +817,7 @@ async def listar_envios(usuario: dict = Depends(auth_usuario),
 app.mount("/static", StaticFiles(directory="static"), name="static")
 
 # versao do front: o navegador compara e recarrega sozinho quando o servidor atualiza (evita aba velha travada)
-APP_VERSAO = "30"
+APP_VERSAO = "31"
 
 @app.get("/api/estatisticas")
 async def estatisticas(usuario: dict = Depends(auth_usuario)):

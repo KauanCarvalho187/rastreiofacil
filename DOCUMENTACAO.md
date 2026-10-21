@@ -4,7 +4,7 @@
 > Backend **FastAPI (Python)** + Frontend **HTML/CSS/JS vanilla** (sem build) +
 > Banco **SQLite** (local), **Postgres** (`DATABASE_URL`) ou **Cloudflare D1**.
 >
-> **Versão do front/back: `30`** (campo `APP_VERSAO` no `main.py` e `APP_V` no `static/app.js`).
+> **Versão do front/back: `31`** (campo `APP_VERSAO` no `main.py` e `APP_V` no `static/app.js`).
 > Documentação revisada em **21/10/2026**, conferida linha a linha contra
 > `main.py`, `db.py`, `validacao.py`, `rastreio.py`, `static/app.js`, `static/index.html`,
 > `cloudflare/worker.js` e os testes.
@@ -29,6 +29,9 @@
 14. [Testes e verificação](#14-testes-e-verificação)
 15. [Histórico de versões](#15-histórico-de-versões)
 16. [Troubleshooting](#16-troubleshooting)
+
+> **Backlog de melhorias:** o arquivo [`AUDITORIA.md`](AUDITORIA.md) lista (com status) os
+> itens pendentes de segurança, acessibilidade, CI, Docker e dependências.
 
 ---
 
@@ -114,6 +117,7 @@ rastreio-asistema1_1/
 ├─ .github/workflows/ci.yml # CI (GitHub Actions)
 ├─ DOCUMENTACAO.md          # Este arquivo
 ├─ COMO_RODAR.md            # Guia rápido de execução
+├─ AUDITORIA.md             # Backlog de melhorias (segurança, a11y, CI, deps) + status
 ├─ README.md                # Resumo do projeto (GitHub)
 └─ PROMPT-VERIFICACAO-PROFUNDA.md # Roteiro de verificação profunda do sistema
 ```
@@ -160,6 +164,12 @@ Para **toda** resposta:
 - `X-Frame-Options: SAMEORIGIN`
 - `Referrer-Policy: no-referrer`
 - `Permissions-Policy: geolocation=(), microphone=(), camera=()`
+- `Content-Security-Policy: default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data:; font-src 'self' data:; connect-src 'self' http://localhost:* http://127.0.0.1:*; object-src 'none'; base-uri 'self'; form-action 'self'; frame-ancestors 'self'` (v31)
+- `Strict-Transport-Security: max-age=31536000; includeSubDomains` — **só** quando a requisição
+  chega por HTTPS (direto ou via proxy, detectado pelo `X-Forwarded-Proto`).
+
+O `cloudflare/worker.js` aplica os **mesmos** cabeçalhos de segurança (inclusive nos assets
+servidos pelo `ASSETS`).
 
 Cache:
 - `/static/libs/*` e `/static/img/*` → `public, max-age=31536000, immutable`;
@@ -167,13 +177,22 @@ Cache:
 - `/`, `/main`, `/login` (HTML) → `no-store`.
 
 ### 5.2 CORS
-Controlado por `CORS_ORIGINS` (lista separada por vírgula; padrão `*`). Padrão `*` mantém
-compatibilidade com Live Server (`:5500`–`:5503`) e `file://`. **Em produção**, defina
-`CORS_ORIGINS=https://seu-dominio.com`.
+Controlado por `CORS_ORIGINS` (lista separada por vírgula).
+
+**v31:** o padrão **não é mais `*`**. Sem `CORS_ORIGINS` vale uma lista restrita ao ambiente
+local — `http://localhost:3000`, `http://127.0.0.1:3000`, `http://localhost:8080`,
+`http://127.0.0.1:8080`, Live Server `:5500`–`:5503` (localhost e 127.0.0.1) e `null`
+(páginas abertas via `file://`). Qualquer outra origem **não** recebe
+`Access-Control-Allow-Origin`.
+
+**Em produção**, defina as origens do app:
+```
+CORS_ORIGINS=https://app.seu-dominio.com,https://seu-dominio.com
+```
 
 ### 5.3 Versionamento do front (anti "aba velha")
-O `app.js` guarda `APP_V = '30'` e pergunta `GET /api/versao`. Se o servidor responder outra
-versão, o front se recarrega sozinho. O `index.html` referencia os assets com `?v=30`.
+O `app.js` guarda `APP_V = '31'` e pergunta `GET /api/versao`. Se o servidor responder outra
+versão, o front se recarrega sozinho. O `index.html` referencia os assets com `?v=31`.
 **Ao publicar mudanças no front, suba a versão nos dois lugares** (`main.py` → `APP_VERSAO`
 e `static/app.js` → `APP_V`, além do `?v=` no `index.html` e no `cloudflare/worker.js`).
 
@@ -234,7 +253,16 @@ nem tela/API de gestão de contas.
 |---|---|
 | E-mail (login) | `ADMIN_EMAIL` — padrão **`admin@admin.com`** |
 | Nome exibido | `ADMIN_NOME` — padrão `Admin` |
-| Senha inicial | `ADMIN_SENHA` — padrão `admin12345` (8–12 caracteres; troque no 1º acesso) |
+| Senha inicial | `ADMIN_SENHA` — **obrigatória em produção**; em dev local (SQLite) o padrão é `admin12345` |
+
+**v31 — a senha padrão pública saiu do código:**
+- **Desenvolvimento local (SQLite):** sem `ADMIN_SENHA` no `.env`, o admin é criado com
+  `admin12345` (o log só avisa que a senha padrão foi usada).
+- **Produção (Postgres / `DATABASE_URL`):** sem `ADMIN_SENHA` o admin **não é criado** e o
+  log mostra um erro pedindo a variável.
+- **Cloudflare Worker:** sem o segredo `ADMIN_SENHA` o admin **não é criado** — rode
+  `npx wrangler secret put ADMIN_SENHA` **antes** do primeiro deploy.
+- A senha **nunca** é impressa no log.
 
 **`garantir_admin()`** roda no boot do servidor (`lifespan` do FastAPI) e, no Worker da
 Cloudflare, a cada requisição `/api` (`garantirAdmin(env)`). Ela:
@@ -260,6 +288,8 @@ Cloudflare, a cada requisição `/api` (`garantirAdmin(env)`). Ela:
 - **Rate-limit de login:** por IP, `LOGIN_MAX_TENT` (10) falhas em `LOGIN_JANELA_SEG` (300s) → `429`.
 - **Logout:** `POST /api/auth/logout` **revoga** o token no banco (não é só no navegador).
 - **Troca de senha:** `POST /api/auth/trocar-senha` (senha nova ≥ 8 caracteres).
+  **v31:** a troca **encerra as outras sessões** do admin (a sessão que fez a troca continua
+  válida) — assim, um token vazado deixa de funcionar depois que a senha muda.
 - **Rotas de dados:** todas exigem token (`Depends(auth_usuario)`) — **não existe modo anônimo**.
 - Sessões **expiradas** são limpas no boot do app (`lifespan`).
 - `GET /api/auth/estado` responde `{admin, email}` — o front usa o `email` para mostrar o login fixo
@@ -529,12 +559,12 @@ Copie `.env.example` para `.env` (nunca commite o `.env`).
 | `SMTP_USER` / `SMTP_PASS` | — | Credenciais (Gmail: senha de app) |
 | `SENDER_NAME` | `Rastreio Facil` | Nome do remetente |
 | `SESSAO_DIAS` | `7` | Validade da sessão |
-| `CORS_ORIGINS` | `*` | Origens permitidas (produção: seu domínio) |
+| `CORS_ORIGINS` | lista local de dev | Origens permitidas (produção: seu domínio) |
 | `LOGIN_MAX_TENT` | `10` | Tentativas de login por IP |
 | `LOGIN_JANELA_SEG` | `300` | Janela do rate-limit (s) |
 | `ADMIN_EMAIL` | `admin@admin.com` | Login da única conta de acesso |
 | `ADMIN_NOME` | `Admin` | Nome exibido do admin |
-| `ADMIN_SENHA` | `admin12345` | Senha **inicial** do admin (vale só na criação da conta) |
+| `ADMIN_SENHA` | `admin12345` (só em dev local) | Senha **inicial** do admin (vale só na criação da conta; **obrigatória** em produção) |
 | `RASTREIO_API_KEY` | — | Chave da API de rastreio |
 | `RASTREIO_API_URL` | API Wonca | URL do provedor (raramente muda) |
 | `RASTREIO_CACHE_MIN` | `30` | Minutos de cache do rastreio |
@@ -562,9 +592,12 @@ docker compose up -d --build
 2. `wrangler d1 execute rastreio-facil --remote --file cloudflare/schema.sql`.
 3. `wrangler secret put RASTREIO_API_KEY` (e `SMTP_USER`/`SMTP_PASS`).
 4. `wrangler secret put ADMIN_SENHA` — senha inicial do `admin@admin.com`.
+   **v31: obrigatório** — sem esse segredo o Worker **não cria** a conta do admin
+   (não existe mais senha padrão pública).
 5. `wrangler deploy`.
 
 > O e-mail e o nome do admin ficam no `vars` do `wrangler.jsonc` (`ADMIN_EMAIL` / `ADMIN_NOME`).
+> O `CORS_ORIGINS` do Worker também fica no `vars` (vazio = lista local de dev).
 
 > **Regra de ouro:** `cloudflare/worker.js` e `cloudflare/schema.sql` devem acompanhar o
 > `main.py`/`db.py`. O `test_analise_erros.py` compara as rotas dos dois e o `APP_VERSAO`.
@@ -637,6 +670,7 @@ cobrindo login, cadastro e lixeira na interface.
 | **v28** | **Admin único**: o sistema passa a ter **uma só conta de acesso** — `admin@admin.com` (configurável por `ADMIN_EMAIL`/`ADMIN_NOME`/`ADMIN_SENHA`). O backend cria/repara essa conta no boot (`garantir_admin()`) e **apaga as contas extras** (e suas sessões) — bancos da era multi-usuário migram sozinhos. **Removidos**: `POST /api/auth/registrar`, `GET /api/usuarios`, `PATCH /api/usuarios/{uid}`, o botão/modal 👥 *Usuários* e o `UsuarioCreate`. O login no front agora pede **só a senha** (o e-mail do admin aparece fixo na tela, preenchido por `GET /api/auth/estado` → `{admin, email}`); **todas** as rotas de dados exigem token (não há mais modo anônimo). Worker da Cloudflare espelhado (`garantirAdmin(env)`). Documentação (`README`, `DOCUMENTACAO`, `COMO_RODAR`) atualizada para o modo de conta única. |
 
 | **v30** | **A área de rolagem dos rastreios desce a página inteira.** A lista da direita tinha a barra limitada a `min(92vh, 1150px)` e ela ficava **cortada embaixo** da tela (era preciso rolar a página para alcançar o fim). No desktop o limite foi removido e a área agora ocupa a coluna inteira (`contain: size` faz o tamanho não depender dos 6.259px de conteúdo): **957px em qualquer resolução** (era 854px em 1080p, 655px em 864p e 567px em 768p). No celular segue o limite de `60vh`. Também foi removida a regra `.lista-scroll` duplicada no CSS. |
+| **v31** | **Segurança (5 críticos corrigidos — see [`AUDITORIA.md`](AUDITORIA.md)).** ① **Senha padrão pública fora do código**: o Worker usava `env.ADMIN_SENHA \|\| 'admin12345'` e as `vars` do `wrangler.jsonc` não tinham `ADMIN_SENHA` → sem o segredo (`npx wrangler secret put ADMIN_SENHA`) o admin **não é criado**; no FastAPI, em produção (Postgres) sem `ADMIN_SENHA` também não; em dev local (SQLite) segue `admin12345` — e a senha **não é mais impressa no log**. ② **CORS**: o padrão deixou de ser `*` e passou a ser a lista local de dev (app `:3000`/`:8080`, Live Server `:5500`–`:5503`, `file://`); em produção, defina `CORS_ORIGINS`. ③ **Trocar a senha agora encerra as outras sessões** (a atual continua) — um token vazado deixa de valer. ④ **Content-Security-Policy** (`default-src 'self'`, `script-src 'self'`, `frame-ancestors 'self'`, …) + **HSTS** quando a conexão é HTTPS — no FastAPI **e** no Worker (inclusive nos assets). ⑤ **Bug do modal de login**: a flag `_loginPedido` ficava presa e o modal **nunca mais abria** — agora é liberada ao fechar o modal e no logout. Extras: o Worker não repassa mais `Authorization`/`Cookie` do cliente ao asset server, `Access-Control-Max-Age` e `CORS_ORIGINS` no `vars`. Novo **`AUDITORIA.md`** com o backlog completo (86 itens) e o status de cada um. |
 | **v29** | **Performance: o site ficou 13× mais leve.** A lib do Excel (`xlsx.full.min.js`, SheetJS 0.18.5, **861 KB**) saiu do `<script>` bloqueante do `index.html` e passa a ser baixada **sob demanda** (`carregarXLSX()`), só ao exportar/importar `.xlsx` → payload inicial de **957 KB → 71 KB (−93%)**. `filtrados()` agora faz **uma única passagem** devolvendo a lista e os contadores dos cards (antes eram 5 `.filter()` por render); o total da lixeira reaproveita o `total` da página já carregada (elimina 1 requisição por `load()`); a lista renderiza em **blocos de 120** com o botão **"Carregar mais"**; o CSS aplica `content-visibility: auto` em `.item` (rolagem leve sem virtualização em JS). Teste de navegador novo garante que a lib **não** é baixada no boot. |
 
 ---

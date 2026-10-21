@@ -11,16 +11,18 @@
 ## 0. Contexto do projeto (não pule)
 
 - **Stack**: Python 3.12 + FastAPI + SQLite (`database.db`; Postgres opcional via env) · front estático em `static/` (JS vanilla, sem build) · testes com `pytest` e Selenium.
-- **Servidor**: `python -m uvicorn main:app --port 3001` (health: `GET /api/health`; versão: `GET /api/versao` → `{"versao":"28"}`).
+- **Servidor**: `python -m uvicorn main:app --port 3001` (health: `GET /api/health`; versão: `GET /api/versao` → `{"versao":"31"}`).
 - **Arquivos principais**: `main.py` (rotas), `db.py` (acesso/diagrama), `validacao.py` (validações), `static/app.js`, `static/index.html`, `static/styles.css`, `cloudflare/worker.js` (espelho do backend).
-- **Acesso único (v28)**: existe **uma só conta** — `admin@admin.com` (senha inicial `admin12345`). Ela é criada sozinha no boot do servidor; contas antigas são apagadas. **Não existe** cadastro de usuários, nem `POST /api/auth/registrar`, nem `GET /api/usuarios`. O login no front pede **só a senha**.
+- **Acesso único (v28)**: existe **uma só conta** — `admin@admin.com`. Ela é criada sozinha no boot do servidor; contas antigas são apagadas. **Não existe** cadastro de usuários, nem `POST /api/auth/registrar`, nem `GET /api/usuarios`. O login no front pede **só a senha**.
+- **Senha sem padrão público (v31)**: em dev local (SQLite) o admin nasce com `admin12345`; em **produção** (Postgres ou Cloudflare) `ADMIN_SENHA` é **obrigatória** — sem ela o admin **não é criado** e a senha **nunca** é impressa no log.
+- **CORS restrito + CSP (v31)**: o padrão do `CORS_ORIGINS` **não** é mais `*` (lista local de dev: `:3000`, `:8080`, Live Server `:5500`–`:5503`, `file://`). Toda resposta tem `Content-Security-Policy` (`script-src 'self'`) e **HSTS** quando chega por HTTPS. Trocar a senha **encerra as outras sessões**.
 - **Front leve (v29)**: a lib do Excel (`static/libs/xlsx.full.min.js`, 861 KB) é carregada **sob demanda** (`carregarXLSX()`) — não pode voltar a ser `<script>` bloqueante no `index.html`. A lista renderiza em blocos de 120 (`PAGINA_LINHAS`) com o botão "Carregar mais".
 - **Área de rolagem sem corte (v30)**: no desktop, `.lista-scroll` não pode ter `max-height` limitado a `92vh` (a barra ficava cortada embaixo da tela). Ela usa `contain: size` e ocupa a coluna inteira (957px). No celular (≤860px) o limite é `60vh`.
 - **Suítes existentes** (todas devem estar verdes no fim):
 
   | Suíte | Comando | Esperado hoje |
   |---|---|---|
-  | análise estática/regressões | `python test_analise_erros.py` | `RESULTADO: TUDO OK` (95 checks) |
+  | análise estática/regressões | `python test_analise_erros.py` | `RESULTADO: TUDO OK` (104 checks) |
   | API in-process (pytest) | `pytest -q` | todos os testes verdes (browser é pulado sem `--browser`) |
   | UI no navegador (Selenium/Chrome) | `pytest --browser` | todos os testes verdes (precisa de Chrome) |
   | E2E da API | `python teste_operacional.py` | fluxo completo verde |
@@ -77,6 +79,11 @@ Para **cada erro** encontrado, siga este ciclo — nunca pule etapas:
 - [ ] Segurança básica: senha nunca em log/resposta, token só em memória, `.env` fora do git, admin check em rotas sensíveis
 - [ ] Cache/versão consistente (`?v=` do front = `APP_VERSAO`)
 - [ ] Consultas paginadas (sem `SELECT *` ilimitado na UI) e índices/`PRAGMA` ok
+- [ ] **v31 — segurança do deploy**: CORS **não** liberado para `*` (origem arbitrária não recebe
+      `Access-Control-Allow-Origin`), `Content-Security-Policy` presente em toda resposta,
+      `ADMIN_SENHA` obrigatória em produção (Worker sem segredo **não** cria o admin),
+      senha do admin **nunca** no log, troca de senha **encerra as outras sessões**,
+      e o modal de login **reabre** depois de fechado (flag `_loginPedido` liberada).
 
 ## 4. Etapa D — Relatório final (obrigatório)
 

@@ -1,6 +1,10 @@
 // Rastreio Facil na Cloudflare: Worker (cloudflare/worker.js) + banco D1 + pasta static/ como assets.
 // Deploy: npx wrangler deploy        Local: npx wrangler dev
 // Segredos (nao ficam neste arquivo): npx wrangler secret put RASTREIO_API_KEY | SMTP_USER | SMTP_PASS
+// v31: o ADMIN_SENHA virou SEGREDO OBRIGATORIO (antes caia no padrao "admin12345", publico).
+//       Rode isto ANTES do primeiro deploy, senao o admin nao e criado:
+//         npx wrangler secret put ADMIN_SENHA
+//       (a senha do admin nunca vai neste arquivo — "vars" sao visiveis no repo)
 {
   "name": "rastreio-facil",
   "account_id": "bedd52c487614d8c9559c8bed64a0296",
@@ -25,7 +29,10 @@
     "LOGIN_JANELA_SEG": "300",
     "RASTREIO_CACHE_MIN": "30",
     "ADMIN_EMAIL": "admin@admin.com",
-    "ADMIN_NOME": "Admin"
+    "ADMIN_NOME": "Admin",
+    // v31: origens liberadas no CORS (vazio = lista local de desenvolvimento).
+    // Em producao: "CORS_ORIGINS": "https://app.seu-dominio.com"
+    "CORS_ORIGINS": ""
   },
   "observability": { "enabled": true }
 }

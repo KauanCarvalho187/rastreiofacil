@@ -23,7 +23,7 @@ function _esperaBackoff(){
 function _backendVoltou(){ _tentativasOff = 0; _semBackendDesde = 0; }
 const $ = id => document.getElementById(id);
 const state = { envios: [], db: {}, token: localStorage.getItem('rf_token')||'', adminEmail: 'admin@admin.com' };
-const APP_V = '30'; /* versão do front: se o servidor tiver outra, a página se recarrega sozinha */
+const APP_V = '31'; /* versão do front: se o servidor tiver outra, a página se recarrega sozinha */
 window.APP_V = APP_V; /* facilita conferir a versão no console: window.APP_V */
 /* ===== erros visíveis: nada de falhar em silêncio =====
    Se qualquer coisa quebrar, o problema aparece na barra vermelha do rodapé
@@ -655,6 +655,7 @@ async function fazerLogout(){
   state.token=''; localStorage.removeItem('rf_token');
   state.usuarioId = null;
   toast('Sessão encerrada.');
+  window._loginPedido = false; /* v31: garante que o modal de login abra de novo */
   pedirLogin('Você saiu. Entre novamente para continuar.');
   await load();
 }
@@ -712,7 +713,15 @@ function boot(){
   document.getElementById('btn-ed-salvar').onclick = salvarEdicao;
   $('btn-rt-atualizar').onclick = ()=>consultarRastreio(true);
   $('btn-rt-site').onclick = ()=>{ if(window._rtCtx) window.open(window._rtCtx.link,'_blank'); };
-  document.querySelectorAll('[data-close]').forEach(b=>b.onclick=()=>{ const ov = b.closest('.modal-ov'); if(ov) ov.hidden = true; });
+  document.querySelectorAll('[data-close]').forEach(b=>b.onclick=()=>{
+    const ov = b.closest('.modal-ov');
+    if(ov){
+      ov.hidden = true;
+      /* v31: fecha o modal de login = libera a flag. Antes ela ficava "presa" e o
+         modal nunca mais abria (nem ao expirar a sessao, nem no logout). */
+      if(ov.id === 'modal-login') window._loginPedido = false;
+    }
+  });
   document.getElementById('drop').onclick = ()=>document.getElementById('f-file').click();
   document.getElementById('f-file').onchange = e=>{ if(e.target.files[0]) lerArquivo(e.target.files[0]); e.target.value=''; };
   const dd = document.getElementById('drop');

@@ -1,7 +1,7 @@
 # Rastreio Fácil — Como rodar
 
 > Documentação técnica completa (arquitetura, API, banco, deploy): **`DOCUMENTACAO.md`**.
-> Versão do front/back: **30**.
+> Versão do front/back: **31**.
 
 Escolha o cenário:
 
@@ -61,8 +61,11 @@ uvicorn main:app --reload --port 3000
 O banco já sobe com a conta **admin@admin.com** pronta (o servidor cria sozinho no boot, sem
 formulário de cadastro). Clique em **👤**, digite a senha e entre.
 
-- **Senha inicial:** `admin12345` (padrão). Para mudar, defina `ADMIN_SENHA` no `.env` **antes** do
-  primeiro boot ou troque a senha depois de entrar (o valor do `.env` só vale na criação).
+- **Senha inicial:** `admin12345` **apenas em desenvolvimento local** (SQLite). Para mudar,
+  defina `ADMIN_SENHA` no `.env` **antes** do primeiro boot ou troque a senha depois de entrar
+  (o valor do `.env` só vale na criação).
+- **Produção (Postgres ou Cloudflare):** `ADMIN_SENHA` é **obrigatória** — sem ela o admin
+  **não é criado** (no Cloudflare: `npx wrangler secret put ADMIN_SENHA`).
 - **Conta antiga:** se o banco veio da versão multi-usuário, as contas extras são removidas no boot
   e sobrou apenas o `admin@admin.com`.
 
@@ -114,12 +117,16 @@ wrangler d1 execute rastreio-facil --remote --file cloudflare/schema.sql
 wrangler secret put RASTREIO_API_KEY
 wrangler secret put SMTP_USER
 wrangler secret put SMTP_PASS
-wrangler secret put ADMIN_SENHA      # senha inicial do admin@admin.com
+wrangler secret put ADMIN_SENHA      # senha inicial do admin@admin.com (OBRIGATORIO)
 # 4) publicar
 wrangler deploy
 ```
 O e-mail do admin fica em `ADMIN_EMAIL` no `wrangler.jsonc` (padrão `admin@admin.com`).
 Para testar localmente: `wrangler dev` (usa `cloudflare/schema.sql` via `--local` quando configurado).
+
+> ⚠️ **v31:** sem o segredo `ADMIN_SENHA` o Worker **não cria** a conta do admin
+> (não existe mais senha padrão pública) — faça o `secret put` **antes** do `deploy`.
+> As origens do CORS do Worker ficam em `CORS_ORIGINS` no `vars` (vazio = lista local de dev).
 
 > ⚠️ Toda mudança de regra/rota no `main.py` **precisa ser espelhada no `cloudflare/worker.js`**.
 > O teste `test_analise_erros.py` compara automaticamente as rotas dos dois (método + caminho).
@@ -168,7 +175,7 @@ A suíte `pytest` cobre o mesmo caminho pela API (sem abrir navegador) e
 
 | Sintoma | O que fazer |
 |---|---|
-| Página com HTML/JS antigo | A versão (`?v=30`) e o header `no-store` resolvem; force recarga (Ctrl+F5). |
+| Página com HTML/JS antigo | A versão (`?v=31`) e o header `no-store` resolvem; force recarga (Ctrl+F5). |
 | "Biblioteca Excel não carregou" ao exportar | A lib do Excel é baixada **sob demanda** (v29): na 1ª vez leva alguns segundos. Sem internet, o export em `.xlsx` não funciona — use **Exportar CSV**, que é nativo e não precisa de lib. |
 | `porta 3000 já em uso` | Feche a outra janela do servidor ou `Get-Process python \| Stop-Process -Force`. |
 | Erro ao mover a pasta do projeto | A `.venv` quebra de caminho; apague a `.venv` e recrie (`iniciar-sistema.bat` cobre o Python do sistema). |

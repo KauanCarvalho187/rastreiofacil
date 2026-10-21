@@ -104,8 +104,8 @@ check("lista: busca todas as paginas do servidor (nao trava em 200)",
 check("rota /api/notificacoes/massa definida uma unica vez (sem duplicata morta)",
       main.count('@app.post("/api/notificacoes/massa")') == 1)
 # melhorias v22 (regressoes — nao remover)
-check("v30: versao front/back em 30 (abas antigas recarregam)",
-      'APP_VERSAO = "30"' in main and "APP_V = '30'" in js and "?v=30" in html)
+check("v31: versao front/back em 31 (abas antigas recarregam)",
+      'APP_VERSAO = "31"' in main and "APP_V = '31'" in js and "?v=31" in html)
 check("v28: admin unico — sem tela de usuarios no front",
       "btn-usuarios" not in html and "modal-usuarios" not in html
       and "btn-usuarios" not in js and "modal-usuarios" not in js)
@@ -159,8 +159,8 @@ check("v28: Worker da Cloudflare tambem e admin unico",
 check("v23: rastreio automatico — rota, cache e modal",
       '@app.post("/api/envios/{envio_id}/rastrear")' in main and "_cache_valido(cache)" in main
       and 'id="modal-rt"' in html and "+'/rastrear'" in js)
-check("v30: Worker da Cloudflare na mesma versao que o main.py",
-      "const APP_VERSAO = '30'" in worker)
+check("v31: Worker da Cloudflare na mesma versao que o main.py",
+      "const APP_VERSAO = '31'" in worker)
 # correcao v25: a lixeira era inalcancavel no front (a listagem padrao da API exclui
 # status='excluido'); agora o admin carrega a lixeira e "Todos" nao mistura excluidos.
 check("v25: admin carrega a lixeira e 'Todos' oculta excluidos",
@@ -214,6 +214,44 @@ check("v24: cabecalhos de seguranca na resposta",
 check("v24: codigo unico no banco (indice) + insert a prova de corrida",
       "idx_envios_codigo_unico" in open(os.path.join(BASE, "db.py"), encoding="utf-8").read()
       and "_e_duplicado" in main)
+
+# ---------------------------------------------------------------- v31: seguranca
+# 1) CORS deixa de ser "*" (ninguem de fora chama a API)
+check("v31: CORS do main.py NAO e liberado para tudo",
+      'os.getenv("CORS_ORIGINS", "*")' not in main
+      and 'CORS_ORIGINS = [o.strip() for o in os.getenv("CORS_ORIGINS", "")' in main
+      and "_CORS_ORIGENS_PADRAO" in main)
+check("v31: Worker tambem restringe o CORS (lista local por padrao)",
+      "CORS_PADRAO_LOCAL" in worker and "Access-Control-Max-Age" in worker)
+# 2) senha padrao publica fora do codigo
+check("v31: main.py NAO usa mais a senha publica como padrao do admin",
+      'ADMIN_SENHA = os.getenv("ADMIN_SENHA") or "admin12345"' not in main
+      and "ADMIN_SENHA_PADRAO_LOCAL" in main)
+check("v31: main.py NAO imprime a senha do admin no log",
+      "(senha inicial: {ADMIN_SENHA})" not in main)
+check("v31: em producao (Postgres) sem ADMIN_SENHA o admin NAO e criado",
+      "elif USE_POSTGRES:" in main and "NAO foi criado" in main)
+check("v31: Worker NAO tem senha padrao publica",
+      "admin12345" not in worker and "env.ADMIN_SENHA || 'admin12345'" not in worker
+      and "NAO foi criado" in worker)
+# 3) trocar a senha derruba as outras sessoes
+check("v31: trocar a senha invalida as OUTRAS sessoes (main.py)",
+      "DELETE FROM sessoes WHERE usuario_id = ? AND token <> ?" in main)
+check("v31: trocar a senha invalida as OUTRAS sessoes (Worker)",
+      "DELETE FROM sessoes WHERE usuario_id = ? AND token <> ?" in worker)
+# 4) CSP + HSTS
+check("v31: main.py manda Content-Security-Policy",
+      "Content-Security-Policy" in main and "script-src 'self'" in main
+      and "frame-ancestors 'self'" in main)
+check("v31: Worker manda os cabecalhos de seguranca (CSP, nosniff, HSTS)",
+      "headersSeguranca" in worker and "Content-Security-Policy" in worker
+      and "Strict-Transport-Security" in worker)
+check("v31: main.py manda HSTS quando a conexao e HTTPS",
+      "Strict-Transport-Security" in main and "x-forwarded-proto" in main)
+# 5) modal de login volta a abrir depois de fechado
+check("v31: fechar o modal de login libera a flag (login volta a abrir)",
+      "if(ov.id === 'modal-login') window._loginPedido = false;" in js
+      and "window._loginPedido = false; /* v31" in js)
 print("RESULTADO:", "TUDO OK" if ok else "HA FALHAS")
 sys.exit(0 if ok else 1)
 
