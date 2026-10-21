@@ -9,7 +9,7 @@ consulta automática de eventos.
 - Banco **SQLite** (local), **Postgres** (`DATABASE_URL`) ou **Cloudflare D1**
 - Roda também como **Cloudflare Worker** (`cloudflare/worker.js`, mesmas rotas `/api`)
 
-> Versão atual do front/back: **28**
+> Versão atual do front/back: **29**
 
 ## Recursos
 
@@ -22,6 +22,8 @@ consulta automática de eventos.
   PBKDF2 e rate-limit de login.
 - **Modo offline** no navegador (`localStorage`) quando não há backend.
 - **Anti-aba-velha**: o front se recarrega quando o servidor é atualizado.
+- **Site leve**: payload inicial de **71 KB** — a lib do Excel (861 KB) só é baixada quando
+  você realmente usa "Exportar Excel".
 
 ## Como rodar
 

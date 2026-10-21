@@ -764,7 +764,7 @@ async def listar_envios(usuario: dict = Depends(auth_usuario),
 app.mount("/static", StaticFiles(directory="static"), name="static")
 
 # versao do front: o navegador compara e recarrega sozinho quando o servidor atualiza (evita aba velha travada)
-APP_VERSAO = "28"
+APP_VERSAO = "29"
 
 @app.get("/api/estatisticas")
 async def estatisticas(usuario: dict = Depends(auth_usuario)):

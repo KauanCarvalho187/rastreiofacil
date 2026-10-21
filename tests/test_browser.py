@@ -60,6 +60,25 @@ def test_sem_tela_de_usuarios(browser, live_server, w):
     assert not browser.find_elements(By.ID, "btn-do-reg")
 
 
+def test_lib_excel_so_carrega_sob_demanda(browser, live_server, w):
+    """v29: a lib do Excel (861 KB) nao pode ser baixada no carregamento da pagina.
+
+    Ela so e requisitada quando o usuario exporta/importa .xlsx — no carregamento
+    inicial o payload precisa ficar leve.
+    """
+    # 1) no carregamento inicial a lib NAO esta na pagina
+    assert not browser.execute_script("return typeof XLSX !== 'undefined';")
+    # 2) nenhum script da lib foi baixado pelo browser
+    baixados = browser.execute_script(
+        "return performance.getEntriesByType('resource')"
+        ".filter(r => r.name.indexOf('xlsx') !== -1).map(r => r.name);"
+    )
+    assert baixados == [], f"a lib do Excel foi baixada no boot: {baixados}"
+    # 3) mas o app sabe carregá-la sob demanda (a função existe e devolve uma promise)
+    tem_funcao = browser.execute_script("return typeof carregarXLSX === 'function';")
+    assert tem_funcao, "a função carregarXLSX (lazy-load) não existe"
+
+
 def test_login_e_logout(browser, live_server, w):
     _login(browser, live_server, w)
     w.until(EC.element_to_be_clickable((By.ID, "btn-logout"))).click()

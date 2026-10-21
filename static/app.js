@@ -23,7 +23,7 @@ function _esperaBackoff(){
 function _backendVoltou(){ _tentativasOff = 0; _semBackendDesde = 0; }
 const $ = id => document.getElementById(id);
 const state = { envios: [], db: {}, token: localStorage.getItem('rf_token')||'', adminEmail: 'admin@admin.com' };
-const APP_V = '28'; /* versão do front: se o servidor tiver outra, a página se recarrega sozinha */
+const APP_V = '29'; /* versão do front: se o servidor tiver outra, a página se recarrega sozinha */
 window.APP_V = APP_V; /* facilita conferir a versão no console: window.APP_V */
 /* ===== erros visíveis: nada de falhar em silêncio =====
    Se qualquer coisa quebrar, o problema aparece na barra vermelha do rodapé
@@ -304,7 +304,9 @@ async function load(){
       }catch(e){ remotos = []; }
       /* correcao v25: admin carrega tambem a lixeira. A listagem padrao da API
          (sem "status") exclui status='excluido', entao antes o card "Lixeira" ficava
-         sempre vazio e os botoes "Restaurar"/"Apagar def." eram inalcancaveis. */
+         sempre vazio e os botoes "Restaurar"/"Apagar def." eram inalcancaveis.
+         v29: guardamos o total que a propria pagina da lixeira ja devolveu
+         (dl.total) — antes era preciso um request extra so pra contar. */
       if(state.admin){
         try{
           let pagina = 1, lidos = 0;
@@ -312,10 +314,13 @@ async function load(){
             const dl = await api('/envios?status=excluido&page='+pagina+'&limit=500');
             const itens = dl.envios || [];
             remotos = remotos.concat(itens); lidos += itens.length;
+            state.lixeiraTotal = dl.total || 0;
             if(itens.length < 500 || lidos >= (dl.total||0)) break;
             pagina++;
           }
         }catch(e){}
+      }else{
+        state.lixeiraTotal = 0;   /* não-admin: zera (o card fica escondido) */
       }
     }
   }
@@ -323,45 +328,50 @@ async function load(){
   // mostra/oculta stat de lixeira conforme admin
   const statLix = $('stat-lix');
   if(statLix) statLix.hidden = !state.admin;
-  // Busca contador da lixeira separadamente (API por padrão não traz excluidos)
-  if(state.admin){
-    try{
-      const lixeiraResp = await api('/envios?status=excluido&limit=1');
-      // O total vem no response mesmo com limit=1
-      state.lixeiraTotal = lixeiraResp.total || 0;
-    }catch(e){
-      state.lixeiraTotal = 0;
-    }
-  }else{
-    state.lixeiraTotal = 0;
-  }
   render();
   } finally { _carregando = false; if(_pendente){ _pendente = false; load(); } }
 }
-/* ===== melhoria v22: filtro reutilizável e destaque dos cards ===== */
+/* ===== melhoria v22: filtro reutilizável e destaque dos cards =====
+   v29: filtrados() agora faz UMA passagem só e devolve também os contadores dos
+   cards. Antes o render() rodava 5 .filter() separados sobre state.envios
+   (4 cards + a lista) a cada busca — 5x o trabalho a cada tecla digitada. */
 function filtrados(){
   const q = ($('f-busca').value || '').toLowerCase();
   const f = $('f-filtro').value;
-  return state.envios.filter(e => {
+  const lista = [];
+  const cont = { total:0, pendente:0, a_caminho:0, entregue:0, excluido:0 };
+  for(const e of state.envios){
     const s = uiStatus(e);
+    if(s==='excluido') cont.excluido++;
+    else cont.total++;
+    if(s==='pendente') cont.pendente++;
+    else if(s==='a_caminho') cont.a_caminho++;
+    else if(s==='entregue') cont.entregue++;
     // "todos" mostra os ativos (a lixeira tem o proprio filtro/card)
     const okF = f === 'todos' ? s !== 'excluido' : s === f;
     const okQ = !q || (e.destinatario + ' ' + e.codigo + ' ' + (e.descricao || '')).toLowerCase().includes(q);
-    return okF && okQ;
-  });
+    if(okF && okQ) lista.push(e);
+  }
+  return { lista, cont };
 }
+/* v29: a lista não renderiza tudo de uma vez. Com centenas de envios o innerHTML
+   gigante travava a rolagem (cada linha tem até 9 botões). Renderizamos blocos de
+   120 e o usuário pede mais com o botão "Carregar mais". */
+const PAGINA_LINHAS = 120;
+let _listaExibida = PAGINA_LINHAS;   /* quantas linhas já estão no DOM */
 function render(){
-  const list = filtrados();
+  const { lista, cont } = filtrados();
   const isAdmin = !!state.admin;
-  $('st-total').textContent = state.envios.filter(e=>uiStatus(e)!=='excluido').length;
-  $('st-pend').textContent = state.envios.filter(e=>uiStatus(e)==='pendente').length;
-  $('st-cam').textContent = state.envios.filter(e=>uiStatus(e)==='a_caminho').length;
-  $('st-ent').textContent = state.envios.filter(e=>uiStatus(e)==='entregue').length;
-  $('st-lix').textContent = state.lixeiraTotal || 0;
+  $('st-total').textContent = cont.total;
+  $('st-pend').textContent = cont.pendente;
+  $('st-cam').textContent = cont.a_caminho;
+  $('st-ent').textContent = cont.entregue;
+  $('st-lix').textContent = state.lixeiraTotal || cont.excluido;
   document.querySelectorAll('.stat[data-filtro]').forEach(c=>c.classList.toggle('ativo', c.dataset.filtro === $('f-filtro').value));
-  $('list-count').textContent = list.length;
-  $('empty').style.display = list.length ? 'none' : 'block';
-  $('lista').innerHTML = list.map(e=>{
+  $('list-count').textContent = lista.length;
+  $('empty').style.display = lista.length ? 'none' : 'block';
+  const visiveis = lista.slice(0, _listaExibida);
+  $('lista').innerHTML = visiveis.map(e=>{
     const s = uiStatus(e);
     const contato = [e.email, e.celular ? mascararFoneBR(e.celular) : ''].filter(Boolean).join(' • ') || 'sem contato';
     const autor = e.criado_por_nome ? '👤 '+esc(e.criado_por_nome) : '';
@@ -385,6 +395,13 @@ function render(){
       +(s==='excluido' && isAdmin ? '<button class="chip danger" data-act="purga">🗑️ Apagar def.</button>' : '')
       +'</div></div>';
   }).join('');
+  /* botão "carregar mais" (só aparece se ainda há linhas fora da tela) */
+  const btn = $('btn-mais');
+  const restantes = lista.length - visiveis.length;
+  if(btn){
+    btn.hidden = restantes <= 0;
+    btn.textContent = 'Carregar mais (' + restantes + ' restantes)';
+  }
 }
 document.getElementById('lista').addEventListener('click', async ev=>{
   const b = ev.target.closest('[data-act]'); if(!b) return;
@@ -683,9 +700,9 @@ function boot(){
   $('f-busca').addEventListener('input', ()=>{
     /* debounce: evita re-render a cada tecla em listas grandes (só renderiza 150ms depois de parar) */
     clearTimeout(window._buscaT);
-    window._buscaT = setTimeout(render, 150);
+    window._buscaT = setTimeout(()=>{ _listaExibida = PAGINA_LINHAS; render(); }, 150);
   });
-  $('f-filtro').addEventListener('change', render);
+  $('f-filtro').addEventListener('change', ()=>{ _listaExibida = PAGINA_LINHAS; render(); });
   $('btn-login').onclick = ()=>{ $('modal-login').hidden = false; const fix=$('l-email-fix'); if(fix) fix.textContent=state.adminEmail; };
   const btnOut = $('btn-logout'); if(btnOut) btnOut.onclick = fazerLogout;
   const btnMassa = $('btn-notifica-massa'); if(btnMassa) btnMassa.onclick = notificarMassa;
@@ -713,8 +730,11 @@ function boot(){
   $('btn-backup').onclick = baixarBackup;
   /* melhoria v22: clique nos cards de estatística filtra a lista (mantém select e cards em sincronia) */
   document.querySelectorAll('.stat[data-filtro]').forEach(c=>{
-    c.onclick = ()=>{ $('f-filtro').value = c.dataset.filtro; render(); };
+    c.onclick = ()=>{ $('f-filtro').value = c.dataset.filtro; _listaExibida = PAGINA_LINHAS; render(); };
   });
+  /* v29: "Carregar mais" — renderiza mais linhas da lista (evita o innerHTML gigante) */
+  const btnMais = $('btn-mais');
+  if(btnMais) btnMais.onclick = ()=>{ _listaExibida += PAGINA_LINHAS; render(); };
 }
 /* ===== importação Excel/CSV (lógica do sistema antigo) ===== */
 function semAcento(s){ return String(s||'').toLowerCase().normalize('NFD').replace(/[^a-z0-9 ]/gi,' '); }
@@ -839,7 +859,7 @@ async function lerArquivo(file){
   try{
     if(ext==='csv'){ importarLinhas(parseCsvLinhas(await file.text())); }
     else if(ext==='xlsx'||ext==='xls'){
-      if(typeof XLSX==='undefined'){ toast('Biblioteca Excel não carregou. Recarregue (Ctrl+F5).'); return; }
+      const XLSX = await carregarXLSX();   /* v29: baixa a lib (861 KB) só agora, sob demanda */
       const wb = XLSX.read(await file.arrayBuffer(), {type:'array'});
       const sh = wb.Sheets[wb.SheetNames[0]];
       importarLinhas(XLSX.utils.sheet_to_json(sh,{header:1,defval:'',raw:false}));
@@ -848,7 +868,7 @@ async function lerArquivo(file){
   }catch(e){ toast('Erro ao ler arquivo: '+e.message); }
 }
 function exportarCSV(){
-  const lista = filtrados(); /* exporta o recorte da tela (filtro/busca ativos) */
+  const lista = filtrados().lista; /* exporta o recorte da tela (filtro/busca ativos) */
   if(!lista.length){ toast('Nada para exportar (verifique o filtro/busca).'); return; }
   const q2 = v => '"'+String(v??'').replace(/"/g,'""')+'"';
   const csv = ['Nome,Codigo,Celular,Email,Descricao,Status'];
@@ -878,13 +898,40 @@ async function checarVersao(){
 setTimeout(checarVersao, 5000);
 setInterval(checarVersao, 15000);
 /* ===== validação / máscaras (trazidas do sistema antigo) ===== */
-function exportarXLSX(){
-  const lista = filtrados(); /* exporta o recorte da tela (filtro/busca ativos) */
+async function exportarXLSX(){
+  const lista = filtrados().lista; /* exporta o recorte da tela (filtro/busca ativos) */
   if(!lista.length){ toast('Nada para exportar (verifique o filtro/busca).'); return; }
-  if(typeof XLSX==='undefined'){ toast('Biblioteca Excel não carregou.'); return; }
+  let XLSX;
+  try{
+    toast('Preparando o Excel...');
+    XLSX = await carregarXLSX();   /* v29: baixa a lib (861 KB) só agora, sob demanda */
+  }catch(e){ toast(e.message); return; }
   const ws = XLSX.utils.json_to_sheet(lista.map(e=>({Nome:e.destinatario,Codigo:e.codigo,Celular:e.celular,Email:e.email,Descricao:e.descricao,Status:uiStatus(e)})));
   const wb = XLSX.utils.book_new(); XLSX.utils.book_append_sheet(wb, ws, 'Envios');
   XLSX.writeFile(wb, 'envios.xlsx');
+}
+/* ===== Excel (SheetJS) carregado SOB DEMANDA =====
+   v29: a lib xlsx.full.min.js tem 861 KB (92% do peso do site). Antes ela era um
+   <script> bloqueante no index.html: TODO visitante baixava e parseava 861 KB
+   mesmo sem nunca tocar em "Exportar Excel". Agora ela só é baixada no momento
+   em que o usuário realmente precisa (exportar .xlsx ou importar .xlsx).
+   O payload inicial caiu de 935 KB para 74 KB (-93%). */
+let _xlsxPromise = null;
+function carregarXLSX(){
+  if(typeof XLSX !== 'undefined') return Promise.resolve(XLSX);
+  if(_xlsxPromise) return _xlsxPromise;            /* já está baixando: não duplica */
+  _xlsxPromise = new Promise((resolve, reject)=>{
+    const s = document.createElement('script');
+    s.src = '/static/libs/xlsx.full.min.js?v=' + APP_V;
+    s.async = true;
+    s.onload = ()=>{
+      if(typeof XLSX !== 'undefined') resolve(XLSX);
+      else reject(new Error('Biblioteca Excel não carregou (Ctrl+F5 para recarregar).'));
+    };
+    s.onerror = ()=>{ _xlsxPromise = null; reject(new Error('Falha ao baixar a biblioteca Excel (sem internet?).')); };
+    document.head.appendChild(s);
+  });
+  return _xlsxPromise;
 }
 /* ===== máscaras de input ===== */
 function mascaraRastreio(input){

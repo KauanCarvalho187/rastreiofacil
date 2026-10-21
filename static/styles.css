@@ -392,6 +392,10 @@ body {
   border-radius: 12px;
   padding: 14px 16px;
   margin-bottom: 10px;
+  /* v29: o browser pula o layout/paint das linhas fora da tela — a rolagem
+     de listas grandes fica leve sem precisar de virtualização em JS. */
+  content-visibility: auto;
+  contain-intrinsic-size: auto 108px;
 }
 
 .item-top {
@@ -499,6 +503,17 @@ body {
 .chip.success {
   color: #4ade80;
   border-color: #4ade80;
+}
+
+/* v29: botão "Carregar mais" (lista paginada em blocos de 120) */
+.btn-mais {
+  display: block;
+  width: 100%;
+  margin: 4px 0 12px;
+  padding: 10px;
+  font-size: 13px;
+  font-weight: 600;
+  background: var(--card2);
 }
 
 /* v28: a tela de usuarios foi removida (admin unico) — nao ha mais estilos dela */

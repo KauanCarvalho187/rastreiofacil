@@ -104,8 +104,8 @@ check("lista: busca todas as paginas do servidor (nao trava em 200)",
 check("rota /api/notificacoes/massa definida uma unica vez (sem duplicata morta)",
       main.count('@app.post("/api/notificacoes/massa")') == 1)
 # melhorias v22 (regressoes — nao remover)
-check("v28: versao front/back em 28 (abas antigas recarregam)",
-      'APP_VERSAO = "28"' in main and "APP_V = '28'" in js and "?v=28" in html)
+check("v29: versao front/back em 29 (abas antigas recarregam)",
+      'APP_VERSAO = "29"' in main and "APP_V = '29'" in js and "?v=29" in html)
 check("v28: admin unico — sem tela de usuarios no front",
       "btn-usuarios" not in html and "modal-usuarios" not in html
       and "btn-usuarios" not in js and "modal-usuarios" not in js)
@@ -118,6 +118,24 @@ check("v28: admin unico — o login mostra o e-mail fixo do admin",
 check("v28: backend garante a conta admin@admin.com no boot",
       'ADMIN_EMAIL = (os.getenv("ADMIN_EMAIL") or "admin@admin.com")' in main
       and "garantir_admin()" in main and "async def garantir_admin" in main)
+# v29: performance — a lib do Excel (861 KB) nao pode voltar a ser bloqueante no index.html
+check("v29: a lib do Excel NAO e carregada bloqueante no index.html",
+      '<script src="/static/libs/xlsx.full.min.js">' not in html
+      and "xlsx.full.min.js" not in html.split("<!-- v29")[0])
+check("v29: a lib do Excel e baixada sob demanda (lazy-load)",
+      "function carregarXLSX()" in js and "await carregarXLSX()" in js
+      and js.count("await carregarXLSX()") >= 2)
+check("v29: o export do Excel usa a lib carregada sob demanda",
+      "async function exportarXLSX" in js and "typeof XLSX==='undefined'" not in js)
+check("v29: a lista nao renderiza tudo de uma vez (pagina de 120)",
+      "PAGINA_LINHAS = 120" in js and "btn-mais" in html and "btn-mais" in js)
+check("v29: filtrados() faz UMA passagem (nao 5 .filter() no render)",
+      js.count("state.envios.filter(") == 0 and "const cont = { total:0" in js)
+check("v29: o total da lixeira vem da pagina ja carregada (sem request extra)",
+      "/envios?status=excluido&limit=1" not in js
+      and "state.lixeiraTotal = dl.total || 0" in js)
+check("v29: CSS usa content-visibility nas linhas (rolagem leve)",
+      "content-visibility: auto" in open(os.path.join(BASE, "static", "styles.css"), encoding="utf-8").read())
 worker = open(os.path.join(BASE, "cloudflare", "worker.js"), encoding="utf-8").read()
 check("v28: Worker da Cloudflare tambem e admin unico",
       "garantirAdmin(env)" in worker and "admin@admin.com" in worker
@@ -127,14 +145,15 @@ check("v28: Worker da Cloudflare tambem e admin unico",
 check("v23: rastreio automatico — rota, cache e modal",
       '@app.post("/api/envios/{envio_id}/rastrear")' in main and "_cache_valido(cache)" in main
       and 'id="modal-rt"' in html and "+'/rastrear'" in js)
-check("v28: Worker da Cloudflare na mesma versao que o main.py",
-      "const APP_VERSAO = '28'" in worker)
+check("v29: Worker da Cloudflare na mesma versao que o main.py",
+      "const APP_VERSAO = '29'" in worker)
 # correcao v25: a lixeira era inalcancavel no front (a listagem padrao da API exclui
 # status='excluido'); agora o admin carrega a lixeira e "Todos" nao mistura excluidos.
 check("v25: admin carrega a lixeira e 'Todos' oculta excluidos",
       "'/envios?status=excluido&page='+pagina" in js
       and "f === 'todos' ? s !== 'excluido'" in js
-      and "uiStatus(e)!=='excluido'" in js)
+      and "if(s==='excluido') cont.excluido++;" in js
+      and "else cont.total++;" in js)
 
 # Paridade REAL de rotas: compara o conjunto (metodo, caminho) dos dois backends.
 # O Worker usa :param; o FastAPI usa {param} — normalizamos os dois para ":id",
@@ -163,7 +182,7 @@ check("v22: /auth/estado informa se o token e de admin",
 check("v22: botao backup no HTML (hidden por padrao)", 'id="btn-backup"' in html and 'btn-backup" hidden' in html)
 check("v22: cards de stats filtram a lista (clique)",
       ".stat[data-filtro]" in js and "c.dataset.filtro" in js)
-check("v22: export CSV/XLSX usa o recorte filtrado", js.count("const lista = filtrados();") >= 2)
+check("v22: export CSV/XLSX usa o recorte filtrado", js.count("const lista = filtrados().lista;") >= 2)
 check("v22: JS baixa backup com token", "'/backup'" in js and "baixarBackup" in js)
 # verificacao profunda / autorreparo (regressoes — nao remover)
 check("delete de envio limpa o historico (eventos) — sem orfaos",
@@ -175,7 +194,7 @@ check("botoes de salvar travam durante a requisicao (loading anti duplo clique)"
 check("v24: Live Server aceita varias portas (nao quebra se mudar 5501->5502)",
       "_portasLiveServer" in js and "5502" in js)
 check("v24: busca com debounce (nao re-renderiza a cada tecla)",
-      "window._buscaT" in js and "setTimeout(render, 150)" in js)
+      "window._buscaT" in js and "setTimeout(()=>{ _listaExibida = PAGINA_LINHAS; render(); }, 150)" in js)
 check("v24: cabecalhos de seguranca na resposta",
       "X-Content-Type-Options" in main and "X-Frame-Options" in main and "Permissions-Policy" in main)
 check("v24: codigo unico no banco (indice) + insert a prova de corrida",

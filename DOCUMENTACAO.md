@@ -4,7 +4,7 @@
 > Backend **FastAPI (Python)** + Frontend **HTML/CSS/JS vanilla** (sem build) +
 > Banco **SQLite** (local), **Postgres** (`DATABASE_URL`) ou **Cloudflare D1**.
 >
-> **Versão do front/back: `28`** (campo `APP_VERSAO` no `main.py` e `APP_V` no `static/app.js`).
+> **Versão do front/back: `29`** (campo `APP_VERSAO` no `main.py` e `APP_V` no `static/app.js`).
 > Documentação revisada em **21/10/2026**, conferida linha a linha contra
 > `main.py`, `db.py`, `validacao.py`, `rastreio.py`, `static/app.js`, `static/index.html`,
 > `cloudflare/worker.js` e os testes.
@@ -87,6 +87,7 @@ rastreio-asistema1_1/
 │  ├─ styles.css            # Tema escuro
 │  ├─ app.js                # Toda a lógica do front (API + offline localStorage)
 │  └─ libs/                 # Bibliotecas vendorizadas (sem CDN)
+│     └─ xlsx.full.min.js   # SheetJS 0.18.5 (861 KB) — carregado SOB DEMANDA (v29)
 │
 ├─ cloudflare/
 │  ├─ worker.js             # Backend para Cloudflare Workers (espelha o main.py)
@@ -171,8 +172,8 @@ compatibilidade com Live Server (`:5500`–`:5503`) e `file://`. **Em produção
 `CORS_ORIGINS=https://seu-dominio.com`.
 
 ### 5.3 Versionamento do front (anti "aba velha")
-O `app.js` guarda `APP_V = '28'` e pergunta `GET /api/versao`. Se o servidor responder outra
-versão, o front se recarrega sozinho. O `index.html` referencia os assets com `?v=28`.
+O `app.js` guarda `APP_V = '29'` e pergunta `GET /api/versao`. Se o servidor responder outra
+versão, o front se recarrega sozinho. O `index.html` referencia os assets com `?v=29`.
 **Ao publicar mudanças no front, suba a versão nos dois lugares** (`main.py` → `APP_VERSAO`
 e `static/app.js` → `APP_V`, além do `?v=` no `index.html` e no `cloudflare/worker.js`).
 
@@ -277,7 +278,7 @@ Erros do FastAPI vêm como `{"detail": "mensagem"}`.
 |---|---|---|
 | GET | `/api/health` | `{ok, db:{configured,connected,driver,url_safe}, smtp, rastreio}` |
 | GET | `/api/db-status` | Status detalhado do banco |
-| GET | `/api/versao` | `{versao}` (hoje `"28"`) |
+| GET | `/api/versao` | `{versao}` (hoje `"29"`) |
 | GET | `/api/auth/estado` | `{admin, email}` — `admin` = o token do header é de admin; `email` = login do admin (`admin@admin.com`) |
 
 ### 8.2 Autenticação
@@ -381,12 +382,15 @@ Cada envio traz `criado_por_nome` e, para admins, `excluido_por_nome`.
 - **Cadastro rápido** e **em lote** (textarea de CSV ou arraste de arquivo `.csv/.xlsx/.xls`).
 - **Lista** com busca (com **debounce** de 150ms), filtro por status (cards clicáveis) e
   lixeira. A busca percorre **todas as páginas** do servidor (não trava em 200).
+  Renderiza em **blocos de 120 linhas** com o botão "Carregar mais" (v29) — evita um
+  `innerHTML` gigante que travava a rolagem com centenas de envios.
 - **Edição** em modal (`PUT`) e **status** por atalho.
 - **WhatsApp:** monta a mensagem e abre `wa.me` (o envio real é feito pelo usuário).
 - **E-mail:** chama `POST /api/notificacoes`; se o SMTP não estiver configurado, cai em `mailto:`.
 - **Rastrear:** modal que consome `POST .../rastrear` e mostra a linha do tempo; botão para o
   site dos Correios.
 - **Exportar** CSV/Excel do recorte filtrado e **Backup do banco** (admin).
+  A lib do Excel é baixada **sob demanda** (v29) — ver §9.2.
 - **Modo offline:** detecta se há backend; sem ele, grava no `localStorage` e mostra um aviso.
   Quando a API volta, sincroniza (com *backoff* de 5s até 60s).
 - **Erros visíveis:** erros de JS aparecem numa **barra vermelha** no rodapé.
@@ -396,6 +400,35 @@ Cada envio traz `criado_por_nome` e, para admins, `excluido_por_nome`.
 O front decide se o backend está disponível tentando as portas do Live Server
 (`5500`–`5503`) e a própria origem. Isso evita o antigo problema de "backend confirmado na 5501
 mas rodando na 5502". `window.APP_V` mostra a versão do front no console.
+
+### 9.2 Performance do front (v29)
+
+**O peso do site.** Medido no Chrome (`performance.getEntriesByType('resource')`):
+
+| | Antes (v28) | Depois (v29) |
+|---|---|---|
+| Payload inicial | **957 KB** | **71 KB** (−93%) |
+| `xlsx.full.min.js` (SheetJS) | 861 KB, `<script>` **bloqueante** | 861 KB, **sob demanda** |
+| Requisições por `load()` | 5 | 4 |
+| Passes de `.filter()` por `render()` | 5 | 1 |
+
+**Lazy-load do Excel.** A lib `static/libs/xlsx.full.min.js` (SheetJS 0.18.5, 861 KB) saiu do
+`<body>` do `index.html`. Agora o `app.js` a injeta no `<head>` **só quando** o usuário clica em
+*Exportar Excel* ou solta um `.xlsx` na área de importação (`carregarXLSX()` — uma promise
+compartilhada, para não baixar duas vezes em cliques seguidos). Quem nunca usa Excel **nunca
+paga** os 861 KB.
+
+> ⚠️ **Ao mexer no Excel:** o `XLSX` só existe **depois** do `await carregarXLSX()`.
+> Se for adicionar código que use `XLSX`, ele tem que ser `async` e esperar a promise.
+
+**Demais otimizações.**
+- `filtrados()` faz **uma única passagem** sobre `state.envios` e devolve a lista **e** os
+  contadores dos cards (antes eram 5 `.filter()` separados a cada tecla digitada).
+- O total da lixeira vem do `total` que a **própria página da lixeira** já devolve
+  (antes era uma requisição extra `?limit=1` só para contar).
+- A lista é renderizada em **blocos de 120** (`PAGINA_LINHAS`) com o botão **"Carregar mais"**.
+- O CSS usa `content-visibility: auto` + `contain-intrinsic-size` em `.item`: o browser pula o
+  layout/paint das linhas fora da tela.
 
 ---
 
@@ -576,13 +609,15 @@ cobrindo login, cadastro e lixeira na interface.
 | **v27** | **Blindagem (self-admin-guard)**: o chip "Remover admin" não fica ativo na **própria linha** do usuário logado — evita o admin se rebaixar sozinho e ficar sem nenhum administrador. Teste de navegador verifica que a linha do próprio admin não tem o botão de alternar admin. |
 | **v28** | **Admin único**: o sistema passa a ter **uma só conta de acesso** — `admin@admin.com` (configurável por `ADMIN_EMAIL`/`ADMIN_NOME`/`ADMIN_SENHA`). O backend cria/repara essa conta no boot (`garantir_admin()`) e **apaga as contas extras** (e suas sessões) — bancos da era multi-usuário migram sozinhos. **Removidos**: `POST /api/auth/registrar`, `GET /api/usuarios`, `PATCH /api/usuarios/{uid}`, o botão/modal 👥 *Usuários* e o `UsuarioCreate`. O login no front agora pede **só a senha** (o e-mail do admin aparece fixo na tela, preenchido por `GET /api/auth/estado` → `{admin, email}`); **todas** as rotas de dados exigem token (não há mais modo anônimo). Worker da Cloudflare espelhado (`garantirAdmin(env)`). Documentação (`README`, `DOCUMENTACAO`, `COMO_RODAR`) atualizada para o modo de conta única. |
 
+| **v29** | **Performance: o site ficou 13× mais leve.** A lib do Excel (`xlsx.full.min.js`, SheetJS 0.18.5, **861 KB**) saiu do `<script>` bloqueante do `index.html` e passa a ser baixada **sob demanda** (`carregarXLSX()`), só ao exportar/importar `.xlsx` → payload inicial de **957 KB → 71 KB (−93%)**. `filtrados()` agora faz **uma única passagem** devolvendo a lista e os contadores dos cards (antes eram 5 `.filter()` por render); o total da lixeira reaproveita o `total` da página já carregada (elimina 1 requisição por `load()`); a lista renderiza em **blocos de 120** com o botão **"Carregar mais"**; o CSS aplica `content-visibility: auto` em `.item` (rolagem leve sem virtualização em JS). Teste de navegador novo garante que a lib **não** é baixada no boot. |
+
 ---
 
 ## 16. Troubleshooting
 
 | Sintoma | Causa provável / solução |
 |---|---|
-| HTML/JS antigo no navegador | Headers `no-store`/`?v=28` já cobrem; force recarga (Ctrl+F5). Confira `window.APP_V`. |
+| HTML/JS antigo no navegador | Headers `no-store`/`?v=29` já cobrem; force recarga (Ctrl+F5). Confira `window.APP_V`. |
 | Login não entra | Senha errada, conta ainda não criada (o servidor cria no boot) ou rate-limit (`429`) — espere a janela. |
 | `401` em rotas de dados | Token ausente/expirado ou sessão revogada; faça login de novo. |
 | `403` no restaurar/purgar/backup | Recurso exclusivo de **admin**. |
@@ -591,6 +626,7 @@ cobrindo login, cadastro e lixeira na interface.
 | Não encontro a senha do admin | O padrão é `admin12345`; troque com `ADMIN_SENHA` **antes** do 1º boot ou use "Trocar senha" depois de entrar. |
 | E-mail não sai | `SMTP_USER`/`SMTP_PASS` ausentes ou senha não é "senha de app" do Gmail. |
 | "Rastrear" só abre os Correios | Falta `RASTREIO_API_KEY`. |
+| "Biblioteca Excel não carregou" / export não abre | A lib é baixada sob demanda (v29): na 1ª vez pode demorar alguns segundos. Se falhar, é falta de internet — recarregue (Ctrl+F5) e tente de novo. |
 | `503`/`502` no rastrear | `503` = sem chave; `502` = provedor fora do ar (se havia cache, ele é mostrado). |
 | Índice único não foi criado | Banco legado tem códigos duplicados; remova os duplicados e recrie o banco/índice. |
 | Docker não acha o banco | Use o volume (`/data`), não bind-mount de arquivo. |

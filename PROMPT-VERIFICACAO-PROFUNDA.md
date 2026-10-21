@@ -14,11 +14,12 @@
 - **Servidor**: `python -m uvicorn main:app --port 3001` (health: `GET /api/health`; versão: `GET /api/versao` → `{"versao":"28"}`).
 - **Arquivos principais**: `main.py` (rotas), `db.py` (acesso/diagrama), `validacao.py` (validações), `static/app.js`, `static/index.html`, `static/styles.css`, `cloudflare/worker.js` (espelho do backend).
 - **Acesso único (v28)**: existe **uma só conta** — `admin@admin.com` (senha inicial `admin12345`). Ela é criada sozinha no boot do servidor; contas antigas são apagadas. **Não existe** cadastro de usuários, nem `POST /api/auth/registrar`, nem `GET /api/usuarios`. O login no front pede **só a senha**.
+- **Front leve (v29)**: a lib do Excel (`static/libs/xlsx.full.min.js`, 861 KB) é carregada **sob demanda** (`carregarXLSX()`) — não pode voltar a ser `<script>` bloqueante no `index.html`. A lista renderiza em blocos de 120 (`PAGINA_LINHAS`) com o botão "Carregar mais".
 - **Suítes existentes** (todas devem estar verdes no fim):
 
   | Suíte | Comando | Esperado hoje |
   |---|---|---|
-  | análise estática/regressões | `python test_analise_erros.py` | `RESULTADO: TUDO OK` (84 checks) |
+  | análise estática/regressões | `python test_analise_erros.py` | `RESULTADO: TUDO OK` (91 checks) |
   | API in-process (pytest) | `pytest -q` | todos os testes verdes (browser é pulado sem `--browser`) |
   | UI no navegador (Selenium/Chrome) | `pytest --browser` | todos os testes verdes (precisa de Chrome) |
   | E2E da API | `python teste_operacional.py` | fluxo completo verde |
@@ -40,6 +41,7 @@
    - Existe validação de entrada em **toda** rota POST/PUT/PATCH (destinatário, código, e-mail, celular, status)?
    - Auth: rotas privadas exigem token válido? token expirado/revogado → 401? admin-only (`/api/backup`, restaurar/purga) → 403 para não-admin? Nenhuma rota de dados aceita requisição **anônima**?
    - Admin único: o boot cria/repara `admin@admin.com` e apaga contas extras? O front pede só a senha e mostra o e-mail fixo?
+   - Performance: a lib do Excel é baixada só sob demanda? O payload inicial fica em ~71 KB? A lista não renderiza tudo de uma vez?
    - No front: toda chamada `fetch` trata erro (res.ok) e mostra mensagem amigável? Há `try/catch` nas operações de salvar/editar/excluir? A lista re-renderiza após CUD (sem F5)?
    - Estado offline (`lerLocais`) não perde dados ao voltar online (merge por código)?
 4. **E2E de UI** (Selenium, padrão do `tests/test_browser.py`: login no `modal-login` com só a senha, interceptar `window.open` para capturar links):
